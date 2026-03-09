@@ -5,6 +5,7 @@
   "git",
   "neovim",
   "next.js",
+  "postgres",
   "rails",
   "redis",
   "sqlite",
