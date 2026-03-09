@@ -1,0 +1,343 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg:             #0d1117;
+  --bg-surface:     #161b22;
+  --bg-elevated:    #1c2128;
+  --bg-input:       #21262d;
+  --bg-input-hover: #30363d;
+  --border:         #30363d;
+  --text:           #c9d1d9;
+  --text-strong:    #e6edf3;
+  --text-muted:     #8b949e;
+  --text-dim:       #484f58;
+  --accent:         #58a6ff;
+  --accent-bg:      rgba(56, 139, 253, 0.1);
+  --accent-border:  #388bfd;
+  --positive:       #3fb950;
+  --positive-bg:    rgba(63, 185, 80, 0.12);
+  --negative:       #f85149;
+  --negative-bg:    rgba(248, 81, 73, 0.12);
+}
+
+[data-theme="light"] {
+  --bg:             #ffffff;
+  --bg-surface:     #f6f8fa;
+  --bg-elevated:    #ffffff;
+  --bg-input:       #f6f8fa;
+  --bg-input-hover: #eaeef2;
+  --border:         #d0d7de;
+  --text:           #1f2328;
+  --text-strong:    #1f2328;
+  --text-muted:     #57606a;
+  --text-dim:       #8c959f;
+  --accent:         #0969da;
+  --accent-bg:      rgba(9, 105, 218, 0.1);
+  --accent-border:  #0969da;
+  --positive:       #1a7f37;
+  --positive-bg:    rgba(26, 127, 55, 0.1);
+  --negative:       #cf222e;
+  --negative-bg:    rgba(207, 34, 46, 0.1);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.6rem 1rem;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#logo {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  text-transform: lowercase;
+  flex-shrink: 0;
+}
+
+#controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+}
+
+select {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  min-width: 180px;
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+#hint {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+main {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  user-select: none;
+}
+
+canvas.dragging {
+  cursor: grabbing;
+}
+
+#status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  pointer-events: none;
+  text-align: center;
+}
+
+#tooltip {
+  display: none;
+  position: fixed;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 13px;
+  font-size: 0.8rem;
+  pointer-events: none;
+  z-index: 100;
+  max-width: 300px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.tip-summary {
+  color: var(--text-strong);
+  font-weight: 600;
+  margin-bottom: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.tip-row {
+  display: flex;
+  gap: 8px;
+  color: var(--text);
+  line-height: 1.7;
+}
+
+.tip-label {
+  color: var(--text-dim);
+  min-width: 44px;
+  flex-shrink: 0;
+}
+
+.tip-delta {
+  font-size: 0.78em;
+  font-family: monospace;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.tip-delta.pos {
+  color: var(--positive);
+  background: var(--positive-bg);
+}
+
+.tip-delta.neg {
+  color: var(--negative);
+  background: var(--negative-bg);
+}
+
+#view-switcher {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.view-btn {
+  position: relative;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.view-btn:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.view-btn:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+#view-switcher .view-btn:not(:first-child) {
+  margin-left: -1px;
+}
+
+.view-btn.active {
+  z-index: 1;
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.view-btn:hover:not(.active) {
+  background: var(--bg-input-hover);
+  color: var(--text);
+}
+
+#settings-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+#settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+#settings-btn:hover,
+#settings-btn.open {
+  background: var(--bg-input-hover);
+  color: var(--text);
+}
+
+#settings-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  z-index: 200;
+  min-width: 220px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#settings-panel[hidden] { display: none; }
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  min-width: 46px;
+}
+
+.settings-row select {
+  min-width: unset;
+  flex: 1;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.view-switcher-inline {
+  display: flex;
+  flex: 1;
+}
+
+.view-switcher-inline .view-btn {
+  flex: 1;
+  font-size: 0.78rem;
+  position: relative;
+}
+
+.view-switcher-inline .view-btn:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.view-switcher-inline .view-btn:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.view-switcher-inline .view-btn:not(:first-child) {
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.view-switcher-inline .view-btn.active {
+  z-index: 1;
+}
+
+footer {
+  flex-shrink: 0;
+  padding: 0.35rem 1rem;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+footer a {
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+footer a:hover {
+  color: var(--text-muted);
+}

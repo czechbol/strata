@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>strata — git code archaeology</title>
+  <script>document.documentElement.dataset.theme=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'</script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <span id="logo">strata</span>
+    <div id="controls">
+      <select id="repo-select" disabled>
+        <option value="">Loading repos…</option>
+      </select>
+      <div id="view-switcher">
+        <button class="view-btn active" data-view="period">by period</button>
+        <button class="view-btn" data-view="author">by author</button>
+      </div>
+      <span id="meta"></span>
+    </div>
+    <div id="hint">scroll to zoom · drag to pan</div>
+    <div id="settings-wrap">
+      <button id="settings-btn" title="Display settings">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.892 3.433-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.892-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.474l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/>
+          <path d="M8 5.754a2.246 2.246 0 1 0 0 4.492 2.246 2.246 0 0 0 0-4.492z"/>
+        </svg>
+      </button>
+      <div id="settings-panel" hidden>
+        <div class="settings-row">
+          <span class="settings-label">theme</span>
+          <div class="view-switcher-inline">
+            <button class="view-btn active" data-theme-btn="auto">Auto</button>
+            <button class="view-btn" data-theme-btn="dark">Dark</button>
+            <button class="view-btn" data-theme-btn="light">Light</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">period</span>
+          <select id="period-scheme-select">
+            <option value="Turbo">Turbo</option>
+            <option value="Viridis" selected>Viridis</option>
+            <option value="Plasma">Plasma</option>
+            <option value="Inferno">Inferno</option>
+            <option value="Magma">Magma</option>
+            <option value="Cividis">Cividis</option>
+            <option value="Spectral">Spectral</option>
+            <option value="Rainbow">Rainbow</option>
+            <option value="Cool">Cool</option>
+            <option value="Warm">Warm</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">author</span>
+          <select id="author-scheme-select">
+            <option value="Tableau10" selected>Tableau 10</option>
+            <option value="Category10">Category 10</option>
+            <option value="Set2">Set 2</option>
+            <option value="Set3">Set 3</option>
+            <option value="Dark2">Dark 2</option>
+            <option value="Paired">Paired</option>
+            <option value="Accent">Accent</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </header>
+  <main>
+    <canvas id="chart"></canvas>
+    <div id="status"></div>
+  </main>
+  <div id="tooltip"></div>
+  <footer>
+    <a href="https://github.com/YOUR_USERNAME/strata" target="_blank" rel="noopener">strata on GitHub</a>
+  </footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
