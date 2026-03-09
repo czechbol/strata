@@ -6,6 +6,8 @@ strata walks a repository's commit history, samples commits at even intervals, a
 
 <img width="1879" height="936" alt="image" src="https://github.com/user-attachments/assets/b1f5747d-a03e-44ee-b6ba-d378fc5081bb" />
 
+> **Note:** strata was nearly entirely written by an LLM, since I have zero Rust experience. I did however do a lot of steering, profiling, etc. to make sure it went the right direction.
+
 ## Requirements
 
 - Rust (stable, 1.70+)
