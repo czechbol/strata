@@ -6,7 +6,8 @@ strata walks a repository's commit history, samples commits at even intervals, a
 
 <img width="1879" height="936" alt="image" src="https://github.com/user-attachments/assets/b1f5747d-a03e-44ee-b6ba-d378fc5081bb" />
 
-> **Note:** strata was nearly entirely written by an LLM, since I have zero Rust experience. I did however do a lot of steering, profiling, etc. to make sure it went the right direction.
+> [!NOTE]
+> strata was nearly entirely written by an LLM, since I have zero Rust experience. I did however do a lot of steering, profiling, etc. to make sure it went the right direction.
 
 ## Requirements
 
@@ -24,7 +25,8 @@ The binary lands at `target/release/strata`.
 
 ## Quick start
 
-> **Note:** strata defaults to 8 parallel blame processes (`-j 8`) to stay unobtrusive. Raise it (e.g. `-j 64`) for faster analysis on machines with spare I/O capacity. On large repositories with many samples, even `-j 8` will keep your CPU moderately busy — keep `-s` reasonable.
+> [!NOTE]
+> strata defaults to 8 parallel blame processes (`-j 8`) to stay unobtrusive. Raise it (e.g. `-j 64`) for faster analysis on machines with spare I/O capacity. On large repositories with many samples, even `-j 8` will keep your CPU moderately busy — keep `-s` reasonable.
 
 ```sh
 # Analyse a local repo (100 sampled commits, all file types)
