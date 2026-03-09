@@ -4,6 +4,8 @@ Git code archaeology — fast parallel blame aggregator with an interactive web 
 
 strata walks a repository's commit history, samples commits at even intervals, and runs `git blame` across every file in parallel. It aggregates line-level authorship and age data by quarter or year and writes the result as MessagePack. A zero-build static web frontend reads that file and renders an interactive stacked area chart showing how code evolved over time — by when lines were written and by who wrote them.
 
+<img width="1879" height="936" alt="image" src="https://github.com/user-attachments/assets/b1f5747d-a03e-44ee-b6ba-d378fc5081bb" />
+
 ## Requirements
 
 - Rust (stable, 1.70+)
