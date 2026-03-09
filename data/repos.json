@@ -1,0 +1,11 @@
+[
+  "deno",
+  "fzf",
+  "git",
+  "neovim",
+  "next.js",
+  "rails",
+  "redis",
+  "sqlite",
+  "uv"
+]
