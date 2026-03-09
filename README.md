@@ -26,7 +26,7 @@ The binary lands at `target/release/strata`.
 ## Quick start
 
 > [!NOTE]
-> strata defaults to 8 parallel blame processes (`-j 8`) to stay unobtrusive. Raise it (e.g. `-j 64`) for faster analysis on machines with spare I/O capacity. On large repositories with many samples, even `-j 8` will keep your CPU moderately busy — keep `-s` reasonable.
+> strata defaults to 8 parallel blame processes (`-j 8`) to be as fast as possible without a greater risk of crashing systems running on modern hardware (with enough CPU threads). Raise it (e.g. `-j 64`) for faster analysis on machines with more threads. Even the default `-j 8` will keep your CPU very busy — tone it down if needed.
 
 ```sh
 # Analyse a local repo (100 sampled commits, all file types)
