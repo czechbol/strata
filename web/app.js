@@ -130,7 +130,7 @@ function expandSparse(sparse, n) {
 
 async function init() {
   try {
-    const resp = await fetch('../data/repos.json');
+    const resp = await fetch('data/repos.json');
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const repos = await resp.json();
 
@@ -171,7 +171,7 @@ async function loadRepo(name) {
   statusEl.textContent = 'Loading…';
   metaEl.textContent = '';
   try {
-    const resp = await fetch(`../data/${name}.msgpack`);
+    const resp = await fetch(`data/${name}.msgpack`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     data = msgpackDecode(await resp.arrayBuffer());
     location.hash = name;
