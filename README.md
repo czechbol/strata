@@ -74,7 +74,6 @@ The frontend lives in `web/` and is a single static page with no build step. Ope
 
 - [User guide](docs/user-guide.md) — all CLI flags, SSH authentication, author bucketing, cache behaviour, web UI walkthrough, and common workflows
 - [Developer guide](docs/developer-guide.md) — architecture, module breakdown, key design decisions, output format, profiling, and contributing
-- [Deploy to GitHub Pages](docs/deploy-gh-pages.md) — one-time setup, ongoing update workflow, troubleshooting
 
 ## Acknowledgements
 
