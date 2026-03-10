@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            os: linux
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            os: linux
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            os: macos
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            os: macos
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            os: windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage binary (Unix)
+        if: matrix.os != 'windows'
+        shell: bash
+        run: |
+          TAG=${GITHUB_REF_NAME}
+          BINARY="strata-${TAG}-${{ matrix.target }}"
+          cp target/${{ matrix.target }}/release/strata "$BINARY"
+          sha256sum "$BINARY" > "${BINARY}.sha256"
+          echo "BINARY=$BINARY" >> $GITHUB_ENV
+
+      - name: Stage binary (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $binary = "strata-$tag-${{ matrix.target }}.exe"
+          Copy-Item "target/${{ matrix.target }}/release/strata.exe" $binary
+          $hash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLower()
+          "$hash  $binary" | Out-File -Encoding ascii "${binary}.sha256"
+          echo "BINARY=$binary" >> $env:GITHUB_ENV
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: strata-${{ matrix.target }}
+          path: |
+            ${{ env.BINARY }}
+            ${{ env.BINARY }}.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
