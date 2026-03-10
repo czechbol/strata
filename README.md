@@ -77,4 +77,4 @@ The frontend lives in `web/` and is a single static page with no build step. Ope
 
 ## Acknowledgements
 
-Inspired by [gitcharts](https://github.com/koaning/gitcharts) by Vincent D. Warmerdam — the original idea and Python/marimo implementation ([talk](https://www.youtube.com/watch?v=BxIsPxBAxHQ)). strata is an independent Rust reimplementation.
+Inspired by [gitcharts](https://github.com/koaning/gitcharts) by Vincent D. Warmerdam — the original idea and Python/marimo implementation ([talk](https://www.youtube.com/watch?v=BxIsPxBAxHQ)).
