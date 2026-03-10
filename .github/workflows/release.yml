@@ -19,15 +19,19 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
             os: linux
+            artifact: linux-x64
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
             os: linux
+            artifact: linux-arm64
           - target: aarch64-apple-darwin
             runner: macos-latest
             os: macos
+            artifact: macos-arm64
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
             os: windows
+            artifact: windows-x64
 
     steps:
       - uses: actions/checkout@v4
@@ -49,8 +53,7 @@ jobs:
         if: matrix.os != 'windows'
         shell: bash
         run: |
-          TAG=${GITHUB_REF_NAME}
-          BINARY="strata-${TAG}-${{ matrix.target }}"
+          BINARY="strata-${{ matrix.artifact }}"
           cp target/${{ matrix.target }}/release/strata "$BINARY"
           sha256sum "$BINARY" > "${BINARY}.sha256"
           echo "BINARY=$BINARY" >> $GITHUB_ENV
@@ -59,8 +62,7 @@ jobs:
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          $tag = $env:GITHUB_REF_NAME
-          $binary = "strata-$tag-${{ matrix.target }}.exe"
+          $binary = "strata-${{ matrix.artifact }}.exe"
           Copy-Item "target/${{ matrix.target }}/release/strata.exe" $binary
           $hash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLower()
           "$hash  $binary" | Out-File -Encoding ascii "${binary}.sha256"
@@ -69,7 +71,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: strata-${{ matrix.target }}
+          name: strata-${{ matrix.artifact }}
           path: |
             ${{ env.BINARY }}
             ${{ env.BINARY }}.sha256
