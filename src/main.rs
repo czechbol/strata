@@ -1,11 +1,12 @@
 mod blame;
 mod period;
 mod repo;
+mod serve;
 mod ssh;
 mod types;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -22,7 +23,25 @@ use types::{OutputData, SeriesPoint};
 
 #[derive(Parser, Debug)]
 #[command(name = "strata", about = "Git code archaeology — fast parallel blame aggregator")]
-struct Args {
+struct Cli {
+    /// Increase log verbosity (-v info, -vv debug, -vvv trace)
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, global = true)]
+    verbose: u8,
+
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Analyze repositories and write data files
+    Process(ProcessArgs),
+    /// Serve the web UI with embedded assets
+    Serve(ServeArgs),
+}
+
+#[derive(Parser, Debug)]
+struct ProcessArgs {
     #[arg(short = 'r', long, help = "Repository URL or local path")]
     repo: String,
 
@@ -53,10 +72,17 @@ struct Args {
     /// Maximum number of parallel blame processes (default: 8; raise to go faster at the cost of CPU/IO)
     #[arg(short = 'j', long = "jobs", default_value = "8")]
     jobs: usize,
+}
 
-    /// Increase log verbosity (-v info, -vv debug, -vvv trace)
-    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, global = true)]
-    verbose: u8,
+#[derive(Parser, Debug)]
+struct ServeArgs {
+    /// Directory containing generated data files
+    #[arg(short = 'd', long, default_value = "web/data")]
+    dir: PathBuf,
+
+    /// Port to listen on
+    #[arg(short = 'p', long, default_value = "8080")]
+    port: u16,
 }
 
 fn init_tracing(verbose: u8) {
@@ -77,9 +103,22 @@ fn init_tracing(verbose: u8) {
         .init();
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
-    init_tracing(args.verbose);
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    init_tracing(cli.verbose);
+
+    match cli.command {
+        Command::Serve(args) => {
+            return serve::serve(args.dir, args.port).await;
+        }
+        Command::Process(args) => run_process(args).await?,
+    }
+
+    Ok(())
+}
+
+async fn run_process(args: ProcessArgs) -> Result<()> {
 
     #[cfg(feature = "profiling")]
     let _guard = pprof::ProfilerGuardBuilder::default()
