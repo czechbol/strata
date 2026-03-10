@@ -141,6 +141,20 @@ canvas.dragging {
   text-align: center;
 }
 
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 #tooltip {
   display: none;
   position: fixed;
@@ -340,4 +354,64 @@ footer a {
 
 footer a:hover {
   color: var(--text-muted);
+}
+
+/* ── Responsive layout ────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  header {
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  /* Row 1: logo (expands) + settings button */
+  #logo {
+    order: 1;
+    flex: 1;
+  }
+
+  #settings-wrap {
+    order: 2;
+  }
+
+  /* Row 2: controls */
+  #controls {
+    order: 3;
+    width: 100%;
+    flex: none;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  #hint {
+    display: none;
+  }
+
+  select {
+    min-width: 0;
+    flex: 1;
+  }
+
+  #meta {
+    width: 100%;
+    font-size: 0.72rem;
+  }
+
+  /* Larger tap targets */
+  .view-btn {
+    padding: 0.45rem 0.7rem;
+    min-height: 36px;
+  }
+
+  #settings-btn {
+    padding: 0.45rem 0.6rem;
+    min-height: 36px;
+  }
+}
+
+@media (max-width: 400px) {
+  #meta {
+    display: none;
+  }
 }

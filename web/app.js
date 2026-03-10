@@ -168,7 +168,13 @@ selectEl.addEventListener('change', () => {
 });
 
 async function loadRepo(name) {
-  statusEl.textContent = 'Loading…';
+  data = null;
+  resizeCanvas();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  statusEl.textContent = '';
+  const spinner = document.createElement('div');
+  spinner.className = 'spinner';
+  statusEl.appendChild(spinner);
   metaEl.textContent = '';
   try {
     const resp = await fetch(`data/${name}.msgpack`);
@@ -616,6 +622,17 @@ canvas.addEventListener('mousedown', e => {
 
 canvas.addEventListener('mousemove', e => {
   if (drag || !data) return;
+  hitTestAndShowTooltip(e.clientX, e.clientY);
+});
+
+canvas.addEventListener('mouseleave', () => {
+  hideTooltip();
+});
+
+// ── Shared tooltip hit-test ────────────────────────────────────────────────
+
+function hitTestAndShowTooltip(clientX, clientY) {
+  if (!data) return;
 
   const dpr = devicePixelRatio || 1;
   const W = canvas.width;
@@ -625,7 +642,7 @@ canvas.addEventListener('mousemove', e => {
   const plotH = H - margin.top - margin.bottom;
 
   const rect = canvas.getBoundingClientRect();
-  const canvasX = (e.clientX - rect.left) * dpr;
+  const canvasX = (clientX - rect.left) * dpr;
   if (canvasX < margin.left || canvasX > margin.left + plotW) {
     hideTooltip();
     return;
@@ -635,7 +652,6 @@ canvas.addEventListener('mousemove', e => {
   const xRange = Math.max(xMax - xMin, 1);
   const ts = xMin + ((canvasX - margin.left) / plotW) * xRange;
 
-  // Use full-resolution visible for accurate nearest-point detection
   const visible = visibleRaw;
   if (!visible || !visible.length) { hideTooltip(); return; }
 
@@ -657,13 +673,10 @@ canvas.addEventListener('mousemove', e => {
   for (let j = 0; j < nPeriods; j++) { acc += nearest.counts[j] || 0; cum[j] = acc; }
   const snapTotal = cum[nPeriods - 1];
 
-  const canvasY = (e.clientY - rect.top) * dpr;
-
-  // Determine which band the cursor falls in (period or author depending on view)
+  const canvasY = (clientY - rect.top) * dpr;
   let hoveredBand = null;
   if (cachedMaxTotal > 0 && canvasY >= margin.top && canvasY <= margin.top + plotH) {
     const val = (margin.top + plotH - canvasY) / plotH * cachedMaxTotal;
-
     if (viewMode === 'period') {
       for (let j = 0; j < nPeriods; j++) {
         if (val <= cum[j]) {
@@ -695,12 +708,82 @@ canvas.addEventListener('mousemove', e => {
   const prev = fullIdx > 0 ? data.series[fullIdx - 1].total : null;
   const delta = prev !== null ? total - prev : null;
 
-  showTooltip(e.clientX, e.clientY, nearest, total, delta, hoveredBand);
-});
+  showTooltip(clientX, clientY, nearest, total, delta, hoveredBand);
+}
 
-canvas.addEventListener('mouseleave', () => {
+// ── Touch support ──────────────────────────────────────────────────────────
+
+let touchDrag = null;  // { startX, origXMin, origXMax, moved }
+let pinchStart = null; // { midFrac, dist, origXMin, origXMax }
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
   hideTooltip();
-});
+  if (e.touches.length === 2) {
+    const a = e.touches[0], b = e.touches[1];
+    const rect = canvas.getBoundingClientRect();
+    const midFrac = ((a.clientX + b.clientX) / 2 - rect.left) / rect.width;
+    const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+    pinchStart = { midFrac, dist, origXMin: viewport.xMin, origXMax: viewport.xMax };
+    touchDrag = null;
+  } else if (e.touches.length === 1) {
+    const t = e.touches[0];
+    touchDrag = { startX: t.clientX, origXMin: viewport.xMin, origXMax: viewport.xMax, moved: false };
+    pinchStart = null;
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!data) return;
+  if (e.touches.length === 2 && pinchStart) {
+    const a = e.touches[0], b = e.touches[1];
+    const newDist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+    const scale = pinchStart.dist / newDist;
+    const { origXMin, origXMax, midFrac } = pinchStart;
+    const range = origXMax - origXMin;
+    const center = origXMin + midFrac * range;
+    viewport = {
+      xMin: center - (center - origXMin) * scale,
+      xMax: center + (origXMax - center) * scale,
+    };
+    invalidateBands();
+    scheduleRender();
+  } else if (e.touches.length === 1 && touchDrag) {
+    const t = e.touches[0];
+    const dx = t.clientX - touchDrag.startX;
+    if (Math.abs(dx) > 5) touchDrag.moved = true;
+    const rect = canvas.getBoundingClientRect();
+    const range = touchDrag.origXMax - touchDrag.origXMin;
+    viewport = {
+      xMin: touchDrag.origXMin - (dx / rect.width) * range,
+      xMax: touchDrag.origXMax - (dx / rect.width) * range,
+    };
+    invalidateBands();
+    scheduleRender();
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (e.changedTouches.length === 1 && touchDrag && !touchDrag.moved && data) {
+    const t = e.changedTouches[0];
+    hitTestAndShowTooltip(t.clientX, t.clientY);
+  }
+  if (e.touches.length === 0) {
+    touchDrag = null;
+    pinchStart = null;
+  } else if (e.touches.length === 1) {
+    pinchStart = null;
+    const t = e.touches[0];
+    touchDrag = { startX: t.clientX, origXMin: viewport.xMin, origXMax: viewport.xMax, moved: false };
+  }
+}, { passive: false });
+
+// Dismiss tooltip when tapping outside the canvas on touch devices
+document.addEventListener('touchstart', e => {
+  if (!e.target.closest('#chart') && !e.target.closest('#tooltip')) hideTooltip();
+}, { passive: true });
 
 function makeRow(label, value) {
   const row = document.createElement('div');
@@ -872,5 +955,10 @@ document.getElementById('author-scheme-select').addEventListener('change', e => 
   invalidateBands();
   scheduleRender();
 });
+
+// Update hint text for touch devices
+if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+  document.getElementById('hint').textContent = 'pinch to zoom · drag to pan · tap for info';
+}
 
 init();
