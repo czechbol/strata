@@ -13,7 +13,6 @@ strata walks a repository's commit history, samples commits at even intervals, a
 
 - Rust (stable, 1.70+)
 - `git` on `$PATH` (used for blame and HTTPS clones)
-- Any static HTTP server for the frontend (`npx serve`, `python3 -m http.server`, etc.)
 
 ## Build
 
@@ -30,38 +29,36 @@ The binary lands at `target/release/strata`.
 
 ```sh
 # Analyse a local repo (100 sampled commits, all file types)
-./target/release/strata -r /path/to/repo
+./target/release/strata process --repo /path/to/repo
 
 # Faster analysis on a machine with fast storage
-./target/release/strata -r /path/to/repo -j 64
+./target/release/strata process --repo /path/to/repo -j 64
 
 # Analyse only Rust and TypeScript files
-./target/release/strata -r /path/to/repo -e .rs,.ts
+./target/release/strata process --repo /path/to/repo -e .rs,.ts
 
 # Analyse a remote repo via SSH (50 sampled commits)
-./target/release/strata -r git@github.com:org/repo.git -s 50
+./target/release/strata process --repo git@github.com:org/repo.git -s 50
 
 # Analyse a remote repo via HTTPS
-./target/release/strata -r https://github.com/org/repo.git -s 50
+./target/release/strata process --repo https://github.com/org/repo.git -s 50
 
-# Serve the results
-npx serve .
-# or: python3 -m http.server
-# then open http://localhost:3000 (or whatever port)
+# Serve the results (opens http://localhost:8080)
+./target/release/strata serve
 ```
 
 ## Output
 
-strata writes to the `data/` directory (override with `-o`):
+strata writes to `web/data/` by default (override with `-o`):
 
 | File | Description |
 |------|-------------|
-| `data/<repo-name>.msgpack` | MessagePack-encoded analysis data consumed by the web frontend |
-| `data/repos.json` | Sorted list of repos known to the frontend; updated automatically |
+| `web/data/<repo-name>.msgpack` | MessagePack-encoded analysis data consumed by the web frontend |
+| `web/data/repos.json` | Sorted list of repos known to the frontend; updated automatically |
 
 ## Web UI
 
-The frontend lives in `web/` and is a single static page with no build step. Open it through a local HTTP server (direct `file://` access won't work — the page fetches files via `fetch()`).
+The `strata serve` command starts an HTTP server on port 8080 that serves the embedded web frontend and reads data files from `web/data/` on the filesystem. Open `http://localhost:8080` in your browser.
 
 - **Repo selector** — switch between all repos in `data/repos.json`
 - **By period** view — stacked area chart coloured by when lines were written (oldest = dark, newest = bright)
@@ -70,9 +67,17 @@ The frontend lives in `web/` and is a single static page with no build step. Ope
 - **Settings gear** — change the colour palette and light/dark theme
 - **Hover** — tooltip shows commit message, author, date, and line count breakdown
 
+```sh
+# Default: serve web/data/ on port 8080
+./target/release/strata serve
+
+# Custom port and data directory
+./target/release/strata serve --port 9000 --dir /path/to/data
+```
+
 ## Documentation
 
-- [User guide](docs/user-guide.md) — all CLI flags, SSH authentication, author bucketing, cache behaviour, web UI walkthrough, and common workflows
+- [User guide](docs/user-guide.md) — all CLI subcommands and flags, SSH authentication, author bucketing, cache behaviour, web UI walkthrough, and common workflows
 - [Developer guide](docs/developer-guide.md) — architecture, module breakdown, key design decisions, output format, profiling, and contributing
 
 ## Acknowledgements

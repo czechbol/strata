@@ -5,7 +5,9 @@ strata is a CLI tool for git code archaeology. It samples a repository's commit 
 ## Table of contents
 
 - [Prerequisites](#prerequisites)
-- [CLI flags](#cli-flags)
+- [Subcommands](#subcommands)
+- [process — analyse a repository](#process--analyse-a-repository)
+- [serve — view results in a browser](#serve--view-results-in-a-browser)
 - [Choosing what to analyse](#choosing-what-to-analyse)
 - [SSH authentication](#ssh-authentication)
 - [Author bucketing](#author-bucketing)
@@ -14,7 +16,6 @@ strata is a CLI tool for git code archaeology. It samples a repository's commit 
 - [Output directory](#output-directory)
 - [Logging](#logging)
 - [Profiling build](#profiling-build)
-- [Serving the web UI](#serving-the-web-ui)
 - [Web UI walkthrough](#web-ui-walkthrough)
 - [Common workflows](#common-workflows)
 
@@ -24,11 +25,31 @@ strata is a CLI tool for git code archaeology. It samples a repository's commit 
 
 - **Rust** (stable) for building
 - **`git`** on `$PATH` — used for running blame and for cloning HTTPS repos
-- **A local HTTP server** for the frontend (any will do)
 
 ---
 
-## CLI flags
+## Subcommands
+
+strata has two subcommands:
+
+```
+strata process [OPTIONS] --repo <REPO>   # analyse a repository and write data files
+strata serve   [OPTIONS]                 # serve the web UI and data files
+```
+
+Global flag available on both subcommands:
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--verbose` | `-v` | (warn) | Log verbosity: `-v` info, `-vv` debug, `-vvv` trace |
+
+---
+
+## process — analyse a repository
+
+```sh
+strata process --repo <URL-or-path> [OPTIONS]
+```
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
@@ -36,12 +57,41 @@ strata is a CLI tool for git code archaeology. It samples a repository's commit 
 | `--samples` | `-s` | `100` | Number of commits to sample; `0` samples every commit |
 | `--extensions` | `-e` | (all files) | Comma-separated file extensions to include |
 | `--granularity` | `-g` | `quarter` | Time resolution: `quarter` or `year` |
-| `--output-dir` | `-o` | `data` | Directory where output files are written |
+| `--output-dir` | `-o` | `web/data` | Directory where output files are written |
 | `--key` | `-k` | (auto) | Path to an SSH private key |
-| `--jobs` | `-j` | `8` | Max parallel blame processes; raise to go faster at the cost of CPU/IO |
+| `--jobs` | `-j` | `8` | Max parallel blame processes |
 | `--no-cache` | | false | Ignore cached blame results and recompute |
 | `--author-threshold` | | `0.80` | Fraction of lines top authors must cover (0.0–1.0) |
-| `--verbose` / `-v` | | (warn) | Log verbosity: `-v` info, `-vv` debug, `-vvv` trace |
+
+---
+
+## serve — view results in a browser
+
+```sh
+strata serve [OPTIONS]
+```
+
+Starts an HTTP server that:
+- Serves the embedded web frontend (`index.html`, `app.js`, `styles.css`) from memory — no files needed on disk
+- Serves data files (`*.msgpack`, `repos.json`) from the configured data directory
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--dir` | `-d` | `web/data` | Directory containing generated data files |
+| `--port` | `-p` | `8080` | Port to listen on |
+
+```sh
+# Default: serve web/data/ on port 8080
+strata serve
+
+# Custom port
+strata serve --port 9000
+
+# Data files in a different directory
+strata serve --dir /var/data/strata --port 8080
+```
+
+Prints `Serving at http://localhost:<port>` on startup. Open that URL in any browser.
 
 ---
 
@@ -53,16 +103,16 @@ Pass any of the following to `-r`:
 
 ```sh
 # Local directory
-strata -r /path/to/repo
+strata process -r /path/to/repo
 
 # SSH URL (SCP-style)
-strata -r git@github.com:org/repo.git
+strata process -r git@github.com:org/repo.git
 
 # SSH URL (explicit scheme)
-strata -r ssh://git@github.com/org/repo.git
+strata process -r ssh://git@github.com/org/repo.git
 
 # HTTPS URL
-strata -r https://github.com/org/repo.git
+strata process -r https://github.com/org/repo.git
 ```
 
 Remote repos are cloned into a temporary directory (`$TMPDIR/strata/downloads/<name>-<hash>/`). If a valid clone already exists there, strata reuses it without re-cloning.
@@ -73,13 +123,13 @@ strata doesn't analyse every commit by default — that would be prohibitively s
 
 ```sh
 # 100 commits (default) — good for most repos
-strata -r /path/to/repo -s 100
+strata process -r /path/to/repo -s 100
 
 # 50 commits — faster, less temporal resolution
-strata -r /path/to/repo -s 50
+strata process -r /path/to/repo -s 50
 
 # All commits — accurate but slow on large repos
-strata -r /path/to/repo -s 0
+strata process -r /path/to/repo -s 0
 ```
 
 More samples = smoother chart and finer temporal resolution, but proportionally more blame work. For a repo with 10 000 commits, `-s 100` means one commit every 100.
@@ -90,13 +140,13 @@ Without `-e`, strata blames every file in the tree. Filter to specific languages
 
 ```sh
 # Rust only
-strata -r /path/to/repo -e .rs
+strata process -r /path/to/repo -e .rs
 
 # Rust, TypeScript, and JavaScript
-strata -r /path/to/repo -e .rs,.ts,.js
+strata process -r /path/to/repo -e .rs,.ts,.js
 
 # Python only
-strata -r /path/to/repo -e .py
+strata process -r /path/to/repo -e .py
 ```
 
 Extensions are matched case-sensitively. Include the leading dot.
@@ -116,7 +166,7 @@ If all options are exhausted, strata exits with an authentication error and a hi
 
 ```sh
 # Override auth with a specific key
-strata -r git@github.com:org/repo.git --key ~/.ssh/deploy_key
+strata process -r git@github.com:org/repo.git --key ~/.ssh/deploy_key
 ```
 
 For HTTPS repos, strata shells out to `git clone`, so your system Git credential helpers (keychain, `git-credential-manager`, etc.) apply automatically.
@@ -125,17 +175,17 @@ For HTTPS repos, strata shells out to `git clone`, so your system Git credential
 
 ## Author bucketing
 
-Real codebases often have dozens or hundreds of contributors. Plotting them all individually makes the chart unreadable. strata solves this by computing the smallest set of authors whose combined lines at HEAD cover at least `--author-threshold` (default 80%) of the total, then bucketing everyone else as **"other"**.
+Real codebases often have dozens or hundreds of contributors. Plotting them all individually makes the chart unreadable. strata computes the smallest set of authors whose combined lines at HEAD cover at least `--author-threshold` (default 80%) of the total, then buckets everyone else as **"other"**.
 
 ```sh
 # Default: top authors covering ≥80% of lines at HEAD are shown individually
-strata -r /path/to/repo
+strata process -r /path/to/repo
 
 # Show more authors: lower threshold means fewer lines bucketed as "other"
-strata -r /path/to/repo --author-threshold 0.95
+strata process -r /path/to/repo --author-threshold 0.95
 
 # Minimal: only the single biggest contributor is named; everyone else is "other"
-strata -r /path/to/repo --author-threshold 0.50
+strata process -r /path/to/repo --author-threshold 0.50
 ```
 
 The threshold applies at the HEAD snapshot. Authors who wrote a lot historically but have little code remaining at HEAD may still fall into "other".
@@ -158,7 +208,7 @@ Cache entries are keyed by blob OID (the SHA of the file content), so:
 To force a fresh run (e.g. after suspecting a corrupted entry):
 
 ```sh
-strata -r /path/to/repo --no-cache
+strata process -r /path/to/repo --no-cache
 ```
 
 You can delete the entire cache directory to reclaim disk space at any time:
@@ -175,13 +225,13 @@ strata runs `git blame` in parallel across all unique file blobs. The `-j` flag 
 
 ```sh
 # Default (8) — low system impact, suitable for background use
-strata -r /path/to/repo
+strata process -r /path/to/repo
 
 # More parallelism — faster on machines with spare cores and fast storage
-strata -r /path/to/repo -j 32
+strata process -r /path/to/repo -j 32
 
 # Maximum throughput — saturate I/O on a dedicated machine
-strata -r /path/to/repo -j 128
+strata process -r /path/to/repo -j 128
 ```
 
 Since blame is subprocess I/O-bound rather than CPU-bound, you can raise `-j` well above your CPU count without degrading other work. The right value depends on your storage speed: SSDs with parallel read paths benefit from higher values; network filesystems and spinning disks may not.
@@ -194,10 +244,10 @@ Controls the time resolution of the x-axis buckets:
 
 ```sh
 # Quarter (default): 2019-Q1, 2019-Q2, …
-strata -r /path/to/repo -g quarter
+strata process -r /path/to/repo -g quarter
 
 # Year: 2019, 2020, …
-strata -r /path/to/repo -g year
+strata process -r /path/to/repo -g year
 ```
 
 Year mode is useful when a repository spans many decades or when the chart looks too noisy with quarterly resolution.
@@ -206,11 +256,14 @@ Year mode is useful when a repository spans many decades or when the chart looks
 
 ## Output directory
 
-By default, files are written to `data/` relative to the current working directory. The directory is created if it doesn't exist.
+By default, files are written to `web/data/` relative to the current working directory. The directory is created if it doesn't exist.
 
 ```sh
 # Write to a custom directory
-strata -r /path/to/repo -o /var/www/strata-data
+strata process -r /path/to/repo -o /var/www/strata-data
+
+# Then serve from that directory
+strata serve --dir /var/www/strata-data
 ```
 
 Files written:
@@ -225,16 +278,16 @@ Files written:
 ## Logging
 
 ```sh
-strata -r /path/to/repo          # only warnings (default)
-strata -r /path/to/repo -v       # info: progress milestones, dedup stats, cache hit rate
-strata -r /path/to/repo -vv      # debug: per-commit detail, SSH key selection, period ranges
-strata -r /path/to/repo -vvv     # trace: per-file blame entries
+strata process -r /path/to/repo          # only warnings (default)
+strata process -r /path/to/repo -v       # info: progress milestones, dedup stats, cache hit rate
+strata process -r /path/to/repo -vv      # debug: per-commit detail, SSH key selection, period ranges
+strata process -r /path/to/repo -vvv     # trace: per-file blame entries
 ```
 
 You can also override log level with the `RUST_LOG` environment variable:
 
 ```sh
-RUST_LOG=strata=debug strata -r /path/to/repo
+RUST_LOG=strata=debug strata process -r /path/to/repo
 ```
 
 ---
@@ -245,7 +298,7 @@ strata ships an optional `profiling` feature that wraps the run in [pprof](https
 
 ```sh
 cargo build --release --features profiling
-./target/release/strata -r /path/to/repo
+./target/release/strata process -r /path/to/repo
 ```
 
 Output files written to the current directory:
@@ -255,27 +308,6 @@ Output files written to the current directory:
 | `flamegraph.svg` | Interactive flamegraph; open in any browser |
 | `profile_summary.txt` | Top-20 hottest functions by sample count |
 | `profile.folded` | Collapsed stacks for further analysis with inferno or similar |
-
----
-
-## Serving the web UI
-
-The `web/` directory contains the frontend. It requires a local HTTP server — direct `file://` access doesn't work because `app.js` uses `fetch()` to load the data files.
-
-```sh
-# From the repository root (serves both web/ and data/)
-npx serve .
-
-# Python
-python3 -m http.server
-
-# Any other static server
-caddy file-server
-```
-
-Open the URL printed by the server (usually `http://localhost:3000` or `http://localhost:8000`).
-
-The page loads `data/repos.json` to populate the repo selector, then fetches `data/<repo-name>.msgpack` when a repo is selected.
 
 ---
 
@@ -314,14 +346,22 @@ The gear icon in the top-right opens a panel for:
 
 ## Common workflows
 
-### Analyse multiple repos and compare
-
-Run strata on each repo, all writing to the same `data/` directory:
+### End-to-end: analyse and view
 
 ```sh
-strata -r /path/to/repo-a -o data/
-strata -r /path/to/repo-b -o data/
-npx serve .
+strata process --repo /path/to/repo
+strata serve
+# open http://localhost:8080
+```
+
+### Analyse multiple repos and compare
+
+Run strata on each repo, all writing to the same output directory:
+
+```sh
+strata process -r /path/to/repo-a
+strata process -r /path/to/repo-b
+strata serve
 ```
 
 Both repos appear in the frontend's dropdown.
@@ -329,43 +369,50 @@ Both repos appear in the frontend's dropdown.
 ### Focus on application code only
 
 ```sh
-strata -r /path/to/repo -e .go,.proto
-strata -r /path/to/repo -e .py,.pyi
-strata -r /path/to/repo -e .ts,.tsx,.js
+strata process -r /path/to/repo -e .go,.proto
+strata process -r /path/to/repo -e .py,.pyi
+strata process -r /path/to/repo -e .ts,.tsx,.js
 ```
 
 ### Track a long-lived repo at yearly resolution
 
 ```sh
-strata -r /path/to/old-repo -g year -s 200
+strata process -r /path/to/old-repo -g year -s 200
 ```
 
 ### Re-run with fresh blame (cache bypass)
 
 ```sh
-strata -r /path/to/repo --no-cache
+strata process -r /path/to/repo --no-cache
 ```
 
 ### Run against a private repo with a specific deploy key
 
 ```sh
-strata -r git@github.com:myorg/private-repo.git --key ~/.ssh/id_ed25519_deploy
+strata process -r git@github.com:myorg/private-repo.git --key ~/.ssh/id_ed25519_deploy
 ```
 
 ### Speed up analysis on a fast machine
 
 ```sh
-strata -r /path/to/repo -j 64
+strata process -r /path/to/repo -j 64
 ```
 
 ### Keep system impact low (background run)
 
 ```sh
-strata -r /path/to/repo -j 4
+strata process -r /path/to/repo -j 4
 ```
 
 ### Verbose run to understand what's happening
 
 ```sh
-strata -r /path/to/repo -vv -s 20
+strata process -r /path/to/repo -vv -s 20
+```
+
+### Write data to a custom directory and serve from there
+
+```sh
+strata process -r /path/to/repo -o /tmp/strata-out
+strata serve --dir /tmp/strata-out --port 9000
 ```
