@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - "web/**"
-      - "data/**"
   workflow_dispatch:
 
 permissions:
@@ -30,9 +29,6 @@ jobs:
         run: |
           mkdir _site
           cp -r web/. _site/
-          if [ -d data ] && [ "$(ls -A data)" ]; then
-            cp -r data _site/data
-          fi
 
       - uses: actions/configure-pages@v5
 

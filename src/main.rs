@@ -35,7 +35,7 @@ struct Args {
     #[arg(short = 'g', long, default_value = "quarter", help = "Granularity: quarter or year")]
     granularity: String,
 
-    #[arg(short = 'o', long, default_value = "data", help = "Output directory for JSON files")]
+    #[arg(short = 'o', long, default_value = "web/data", help = "Output directory for data files")]
     output_dir: PathBuf,
 
     /// SSH private key to use for authentication (overrides agent and key discovery)
