@@ -77,4 +77,4 @@ The frontend lives in `web/` and is a single static page with no build step. Ope
 
 ## Acknowledgements
 
-Inspired by [gitcharts](https://github.com/koaning/gitcharts) by Vincent D. Warmerdam — the original idea and Python/marimo implementation ([talk](https://www.youtube.com/watch?v=BxIsPxBAxHQ)). strata is an independent Rust reimplementation, though the Python version could likely be optimised to similar speeds — the bottleneck is git I/O, not the language. For me this was a fun opportunity to try vibecoding in a language I'm not familiar with and try to optimize the hell out of it.
+Inspired by [gitcharts](https://github.com/koaning/gitcharts) by Vincent D. Warmerdam — the original idea and Python/marimo implementation ([talk](https://www.youtube.com/watch?v=BxIsPxBAxHQ)). strata is an independent Rust reimplementation.
