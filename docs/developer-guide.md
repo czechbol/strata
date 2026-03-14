@@ -84,7 +84,7 @@ strata/
 
 3. **Sampling** (`repo.rs`) — Select `N` commits at evenly-spaced indices across the sorted list. This gives uniform temporal coverage rather than clustering around busy periods.
 
-4. **Work items** (`repo.rs`) — For each sampled commit, walk the tree and emit a `WorkItem` (commit OID, file path, blob OID) for every file that matches the extension filter.
+4. **Work items** (`repo.rs`) — For each sampled commit, walk the tree and emit a `WorkItem` (commit OID, file path, blob OID) for every file that passes the extension filter (`-e`), then the include glob set (`--include`), then the exclude glob set (`--exclude`). All three filters are optional and independent.
 
 5. **Blob deduplication** (`main.rs`) — Group work items by blob OID. If the same file content appears in 50 sampled commits, it only needs one blame call. The dedup ratio is logged at `-v`.
 
@@ -130,7 +130,7 @@ Two public functions:
 
 **`sample_commits(commits, n)`** — Evenly-spaced index selection: `commits[i * (len-1) / (n-1)]` for `i` in `0..n`. Preserves both the oldest and newest commits.
 
-**`collect_work_items(repo_path, sampled, extensions)`** — Tree walk via libgit2 for each sampled commit, emitting one `WorkItem` per blob entry that passes the extension filter.
+**`collect_work_items(repo_path, sampled, extensions, include_set, exclude_set)`** — Tree walk via libgit2 for each sampled commit, emitting one `WorkItem` per blob entry that passes the extension filter, then the include/exclude glob sets. `include_set` and `exclude_set` are both `Option<GlobSet>`; `None` means "no filter". Include is checked before exclude: a file must match an include pattern (if any) and must not match an exclude pattern (if any).
 
 ### `ssh.rs`
 
@@ -266,6 +266,7 @@ OutputData
 |-------|---------|
 | `clap` (derive) | CLI argument parsing |
 | `git2` (vendored-libgit2, ssh) | Commit walking, tree walking, SSH cloning |
+| `globset` | Glob pattern compilation and matching for `--include`/`--exclude` |
 | `rayon` | Parallel blame dispatch |
 | `sled` | Persistent blame cache |
 | `rmp-serde` | MessagePack serialisation |
