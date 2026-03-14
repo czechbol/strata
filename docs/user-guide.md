@@ -66,6 +66,7 @@ strata process --repo <URL-or-path> [OPTIONS]
 | `--exclude` | | (none) | Comma-separated glob patterns; matching paths are skipped |
 | `--no-cache` | | false | Ignore cached blame results and recompute |
 | `--author-threshold` | | `0.80` | Fraction of lines top authors must cover (0.0–1.0) |
+| `--first-parent` | | false | Follow only the first-parent chain (skips commits merged from branches) |
 
 ---
 
@@ -137,6 +138,13 @@ strata process -r /path/to/repo -s 0
 ```
 
 More samples = smoother chart and finer temporal resolution, but proportionally more blame work. For a repo with 10 000 commits, `-s 100` means one commit every 100.
+
+By default strata includes all reachable commits — including those merged in from branches. Pass `--first-parent` to restrict the walk to the main-branch spine only. This is faster and produces a cleaner chart for repos where branch merges are frequent, but it will skip commits that exist only on merged branches.
+
+```sh
+# Walk only the main-branch history (skip merged branch commits)
+strata process -r /path/to/repo --first-parent
+```
 
 ### Filtering by extension
 

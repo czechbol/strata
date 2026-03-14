@@ -126,7 +126,7 @@ Two public functions:
 
 **`ensure_repo(url, ssh_key)`** — Handles the local/remote/cached-clone decision tree.
 
-**`get_commit_list(repo_path)`** — libgit2 revwalk, time-sorted, with HEAD-unborn fallback.
+**`get_commit_list(repo_path, first_parent)`** — libgit2 revwalk, time-sorted, with HEAD-unborn fallback. When `first_parent` is `true`, calls `simplify_first_parent()` on the walk so only the main-branch spine is traversed.
 
 **`sample_commits(commits, n)`** — Evenly-spaced index selection: `commits[i * (len-1) / (n-1)]` for `i` in `0..n`. Preserves both the oldest and newest commits.
 
