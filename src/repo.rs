@@ -23,7 +23,7 @@ pub fn repo_name(url: &str) -> String {
     url.trim_end_matches('/')
         .trim_end_matches(".git")
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or("repo")
         .to_string()
 }
@@ -144,6 +144,7 @@ pub fn sample_commits(commits: Vec<(Oid, i64)>, n: usize) -> Vec<(Oid, i64)> {
 /// Returns all `(commit_oid, blob_oid)` work pairs **and** a deduplicated
 /// `blame_lookup` map: one `(commit_oid, file_path)` per unique blob OID,
 /// sufficient for the blame phase without duplicating paths across commits.
+#[allow(clippy::type_complexity)]
 pub fn collect_work_items(
     repo_path: &Path,
     sampled: &[(Oid, i64)],
@@ -172,7 +173,7 @@ pub fn collect_work_items(
                 let matched = Path::new(name)
                     .extension()
                     .and_then(|e| e.to_str())
-                    .map(|e| exts.iter().any(|x| x == &format!(".{e}")))
+                    .map(|e| exts.iter().any(|x| x.trim_start_matches('.') == e))
                     .unwrap_or(false);
                 if !matched {
                     return TreeWalkResult::Ok;
