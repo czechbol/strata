@@ -41,6 +41,13 @@
           </div>
         </div>
         <div class="settings-row">
+          <span class="settings-label">legend</span>
+          <div class="view-switcher-inline">
+            <button class="view-btn" data-legend-btn="off">Off</button>
+            <button class="view-btn active" data-legend-btn="on">On</button>
+          </div>
+        </div>
+        <div class="settings-row">
           <span class="settings-label">period</span>
           <select id="period-scheme-select">
             <option value="Turbo">Turbo</option>
@@ -71,8 +78,12 @@
     </div>
   </header>
   <main>
-    <canvas id="chart"></canvas>
-    <div id="status"></div>
+    <div id="chart-wrap">
+      <canvas id="chart"></canvas>
+      <div id="status"></div>
+    </div>
+    <div id="legend-handle" hidden></div>
+    <div id="legend" hidden></div>
   </main>
   <div id="tooltip"></div>
   <footer>

@@ -114,8 +114,17 @@ select:disabled {
 
 main {
   flex: 1;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  min-height: 0;
+}
+
+#chart-wrap {
+  flex: 1;
   position: relative;
   overflow: hidden;
+  min-width: 0;
 }
 
 canvas {
@@ -247,6 +256,78 @@ canvas.dragging {
 .view-btn:hover:not(.active) {
   background: var(--bg-input-hover);
   color: var(--text);
+}
+
+
+#legend {
+  width: max-content;
+  min-width: 120px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  font-size: 0.75rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+#legend::-webkit-scrollbar {
+  width: 4px;
+}
+
+#legend::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#legend::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+#legend::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
+#legend-handle {
+  flex-shrink: 0;
+  width: 4px;
+  cursor: col-resize;
+  background: var(--border);
+  transition: background 0.15s;
+}
+
+#legend-handle:hover,
+#legend-handle.dragging {
+  background: var(--accent);
+}
+
+#legend-handle[hidden] { display: none; }
+
+#legend[hidden] { display: none; }
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.4;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-label {
+  color: var(--text);
+  white-space: nowrap;
 }
 
 #settings-wrap {
@@ -382,6 +463,29 @@ footer a:hover {
     flex: none;
     flex-wrap: wrap;
     gap: 0.4rem;
+  }
+
+  main {
+    flex-direction: column;
+  }
+
+  #legend-handle {
+    width: 100%;
+    height: 4px;
+    cursor: row-resize;
+  }
+
+  #legend {
+    width: 100%;
+    max-width: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-left: none;
+    border-top: none;
+    max-height: 130px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    gap: 6px 14px;
   }
 
   #hint {
