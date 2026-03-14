@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use git2::{Oid, Repository, Sort, TreeWalkMode, TreeWalkResult};
+use globset::GlobSet;
 use rustc_hash::FxHashMap;
 use std::env;
 use std::fs;
@@ -147,6 +148,8 @@ pub fn collect_work_items(
     repo_path: &Path,
     sampled: &[(Oid, i64)],
     extensions: &Option<Vec<String>>,
+    include_set: &Option<GlobSet>,
+    exclude_set: &Option<GlobSet>,
 ) -> Result<(Vec<WorkItem>, FxHashMap<Oid, (Oid, String)>)> {
     let repo = Repository::open(repo_path)?;
     let mut items = Vec::new();
@@ -175,10 +178,21 @@ pub fn collect_work_items(
                     return TreeWalkResult::Ok;
                 }
             }
+            let full_path = format!("{dir}{name}");
+            if let Some(ref inc) = include_set {
+                if !inc.is_match(&full_path) {
+                    return TreeWalkResult::Ok;
+                }
+            }
+            if let Some(ref exc) = exclude_set {
+                if exc.is_match(&full_path) {
+                    return TreeWalkResult::Ok;
+                }
+            }
             let blob_oid = entry.id();
             items.push(WorkItem { commit_oid: oid, blob_oid });
             // Store one (commit_oid, path) per unique blob for the blame phase.
-            blame_lookup.entry(blob_oid).or_insert_with(|| (oid, format!("{dir}{name}")));
+            blame_lookup.entry(blob_oid).or_insert_with(|| (oid, full_path));
             TreeWalkResult::Ok
         })?;
 
