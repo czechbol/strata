@@ -3,6 +3,7 @@ use chrono::{Datelike, TimeZone, Utc};
 use git2::{Oid, Repository};
 use regex::Regex;
 use std::path::Path;
+use std::sync::OnceLock;
 use tracing::debug;
 
 use crate::types::Tag;
@@ -33,9 +34,13 @@ pub fn period_int_to_string(p: i32, yearly: bool) -> String {
     }
 }
 
+static SEMVER_RE: OnceLock<Regex> = OnceLock::new();
+
 pub fn get_version_tags(repo_path: &Path) -> Result<Vec<Tag>> {
     let repo = Repository::open(repo_path)?;
-    let semver_re = Regex::new(r"(?i)^refs/tags/v?(\d+)\.(\d+)\.(\d+)")?;
+    let semver_re = SEMVER_RE.get_or_init(|| {
+        Regex::new(r"(?i)^refs/tags/v?(\d+)\.(\d+)\.(\d+)").unwrap()
+    });
 
     let mut tag_refs: Vec<(String, Oid)> = Vec::new();
     repo.tag_foreach(|oid, name_bytes| {
