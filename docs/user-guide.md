@@ -231,11 +231,17 @@ Cache entries are keyed by blob OID (the SHA of the file content), so:
 - Entries survive across runs and across different repositories.
 - Moving or renaming a file doesn't invalidate its cache entry as long as the content didn't change.
 
-To force a fresh run (e.g. after suspecting a corrupted entry):
+To force a fresh run (e.g. after suspecting a corrupted entry, or after upgrading strata — see note below):
 
 ```sh
 strata process -r /path/to/repo --no-cache
 ```
+
+> **After upgrading:** strata now always passes `-w` to `git blame`, which changes line attribution for commits that only touch whitespace. Existing cache entries were produced without `-w` and will give different results than a fresh run. Pass `--no-cache` once after upgrading to recompute cleanly.
+
+### `.git-blame-ignore-revs`
+
+If the repository contains a `.git-blame-ignore-revs` file in its root, strata automatically passes it to every `git blame` invocation via `--ignore-revs-file`. This causes bulk commits (formatting runs, mass renames) to be skipped, so lines are attributed to the author who made the meaningful change rather than whoever ran the formatter. No configuration is needed — the file's presence is the signal.
 
 You can delete the entire cache directory to reclaim disk space at any time:
 

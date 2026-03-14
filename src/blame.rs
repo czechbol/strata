@@ -15,22 +15,26 @@ pub fn spawn_blame(
     repo_path: &Path,
     commit_oid: Oid,
     file_path: &str,
+    ignore_revs: Option<&Path>,
 ) -> Option<std::process::Child> {
-    std::process::Command::new("git")
-        .args([
-            "-C", &repo_path.to_string_lossy(),
-            "blame", "--porcelain",
-            &commit_oid.to_string(),
-            "--", file_path,
-        ])
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| warn!("git spawn failed for {file_path}: {e}"))
-        .ok()
+    let mut cmd = std::process::Command::new("git");
+    cmd.args([
+        "-C", &repo_path.to_string_lossy(),
+        "blame", "--porcelain", "-w",
+        &commit_oid.to_string(),
+        "--", file_path,
+    ]);
+    if let Some(p) = ignore_revs {
+        cmd.arg(format!("--ignore-revs-file={}", p.display()));
+    }
+    cmd.env("GIT_CONFIG_NOSYSTEM", "1")
+       .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+       .env("GIT_OPTIONAL_LOCKS", "0")
+       .stdout(std::process::Stdio::piped())
+       .stderr(std::process::Stdio::null())
+       .spawn()
+       .map_err(|e| warn!("git spawn failed for {file_path}: {e}"))
+       .ok()
 }
 
 pub fn parse_blame_output(stdout: &[u8]) -> Vec<(i64, String)> {
