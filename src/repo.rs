@@ -81,11 +81,13 @@ pub fn ensure_repo(url: &str, ssh_key: Option<PathBuf>) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub fn get_commit_list(repo_path: &Path) -> Result<Vec<(Oid, i64)>> {
+pub fn get_commit_list(repo_path: &Path, first_parent: bool) -> Result<Vec<(Oid, i64)>> {
     let repo = Repository::open(repo_path)?;
     let mut walk = repo.revwalk()?;
     walk.set_sorting(Sort::TIME)?;
-    walk.simplify_first_parent()?;
+    if first_parent {
+        walk.simplify_first_parent()?;
+    }
 
     // push_head() fails when HEAD points to an unborn or non-existent branch
     // (e.g. a repo whose default branch is "master" but was cloned expecting "main").

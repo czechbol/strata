@@ -97,6 +97,10 @@ struct ProcessArgs {
     /// Maximum number of parallel blame processes (default: 8; raise to go faster at the cost of CPU/IO)
     #[arg(short = 'j', long = "jobs", default_value = "8")]
     jobs: usize,
+
+    /// Follow only the first-parent chain (skips commits merged from branches)
+    #[arg(long = "first-parent")]
+    first_parent: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -388,7 +392,7 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
     };
 
     info!("Walking commit history");
-    let all_commits = get_commit_list(&repo_path)?;
+    let all_commits = get_commit_list(&repo_path, args.first_parent)?;
     let sampled = sample_commits(all_commits, args.samples);
     info!("{} commits sampled", sampled.len());
 
