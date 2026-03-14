@@ -9,6 +9,8 @@ strata is a CLI tool for git code archaeology. It samples a repository's commit 
 - [process — analyse a repository](#process--analyse-a-repository)
 - [serve — view results in a browser](#serve--view-results-in-a-browser)
 - [Choosing what to analyse](#choosing-what-to-analyse)
+  - [Filtering by extension](#filtering-by-extension)
+  - [Filtering by path (glob)](#filtering-by-path-glob)
 - [SSH authentication](#ssh-authentication)
 - [Author bucketing](#author-bucketing)
 - [Blame cache](#blame-cache)
@@ -60,6 +62,8 @@ strata process --repo <URL-or-path> [OPTIONS]
 | `--output-dir` | `-o` | `web/data` | Directory where output files are written |
 | `--key` | `-k` | (auto) | Path to an SSH private key |
 | `--jobs` | `-j` | `8` | Max parallel blame processes |
+| `--include` | | (all paths) | Comma-separated glob patterns; only matching paths are analysed |
+| `--exclude` | | (none) | Comma-separated glob patterns; matching paths are skipped |
 | `--no-cache` | | false | Ignore cached blame results and recompute |
 | `--author-threshold` | | `0.80` | Fraction of lines top authors must cover (0.0–1.0) |
 
@@ -150,6 +154,28 @@ strata process -r /path/to/repo -e .py
 ```
 
 Extensions are matched case-sensitively. Include the leading dot.
+
+### Filtering by path (glob)
+
+`--include` and `--exclude` accept comma-separated glob patterns matched against the full repo-relative file path (e.g. `src/foo/bar.rs`). Patterns follow standard glob syntax (`*`, `**`, `?`, `[...]`).
+
+- **Neither flag** — all files pass (subject to `-e`).
+- **`--include` only** — a file must match at least one include pattern or it is skipped.
+- **`--exclude` only** — a file is skipped if it matches any exclude pattern.
+- **Both** — a file must match an include pattern *and* must not match any exclude pattern.
+
+```sh
+# Only files under src/ or lib/
+strata process -r /path/to/repo --include 'src/**,lib/**'
+
+# Exclude vendored and generated code
+strata process -r /path/to/repo --exclude 'vendor/**,gen/**'
+
+# Only application source, no tests or docs
+strata process -r /path/to/repo --include 'src/**' --exclude 'src/tests/**'
+```
+
+`--include`/`--exclude` and `-e` can be combined; `-e` filters by extension first, then glob patterns are applied.
 
 ---
 
@@ -334,11 +360,21 @@ The **by author** button recolours the stacks by who wrote each line. This answe
 
 Version tags (semver only) are shown as vertical lines. Tags with a longer gap to their neighbours are shown with a more prominent label.
 
+### Legend
+
+A legend panel is shown on the right side of the chart (or at the bottom on mobile). It lists all periods or authors, each with a colour swatch matching the chart. The panel can be:
+
+- **Toggled** on/off with the **legend on/off** buttons in the settings panel
+- **Resized** by dragging the handle between the chart and the legend (drag left/right on desktop, up/down on mobile)
+
+The legend updates automatically when you switch between period and author views or change the colour scheme.
+
 ### Settings
 
 The gear icon in the top-right opens a panel for:
 
 - **Theme** — auto (follows system), dark, or light
+- **Legend** — on (default) or off
 - **Period colour scheme** — Viridis (default), Turbo, Plasma, Inferno, Magma, Cividis, Spectral, Rainbow, Cool, Warm
 - **Author colour scheme** — Tableau 10 (default), Category 10, Set 2, Set 3, Dark 2, Paired, Accent
 
@@ -372,6 +408,16 @@ Both repos appear in the frontend's dropdown.
 strata process -r /path/to/repo -e .go,.proto
 strata process -r /path/to/repo -e .py,.pyi
 strata process -r /path/to/repo -e .ts,.tsx,.js
+```
+
+### Exclude vendored, generated, or test code
+
+```sh
+# Skip vendor/ and generated pb.go files
+strata process -r /path/to/repo --exclude 'vendor/**,**/*.pb.go'
+
+# Only include source code, not tests
+strata process -r /path/to/repo --include 'src/**' --exclude 'src/**/*_test.*,src/**/test_*'
 ```
 
 ### Track a long-lived repo at yearly resolution
