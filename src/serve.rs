@@ -69,7 +69,7 @@ async fn data_file(
     }
 }
 
-pub async fn serve(dir: PathBuf, port: u16) -> Result<()> {
+pub async fn serve(dir: PathBuf, host: String, port: u16) -> Result<()> {
     let app = Router::new()
         .route("/", get(root))
         .route("/app.js", get(app_js))
@@ -79,9 +79,9 @@ pub async fn serve(dir: PathBuf, port: u16) -> Result<()> {
         .route("/data/:file", get(data_file))
         .with_state(dir);
 
-    let addr = format!("0.0.0.0:{port}");
+    let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    println!("Serving at http://localhost:{port}");
+    println!("Serving at http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
