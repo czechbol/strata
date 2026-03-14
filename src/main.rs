@@ -86,6 +86,10 @@ struct ServeArgs {
     #[arg(short = 'd', long, default_value = "web/data")]
     dir: PathBuf,
 
+    /// Host address to bind
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+
     /// Port to listen on
     #[arg(short = 'p', long, default_value = "8080")]
     port: u16,
@@ -125,7 +129,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Serve(args) => {
-            return serve::serve(args.dir, args.port).await;
+            return serve::serve(args.dir, args.host, args.port).await;
         }
         Command::Process(args) => run_process(args).await?,
     }
