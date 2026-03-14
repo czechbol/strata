@@ -33,7 +33,7 @@ pub fn spawn_blame(
         .ok()
 }
 
-pub fn parse_blame_output(stdout: &[u8], blob_oid: Oid, cache: &sled::Db) -> Vec<(i64, String)> {
+pub fn parse_blame_output(stdout: &[u8]) -> Vec<(i64, String)> {
     // Parse --porcelain: commit metadata appears once per commit, keyed by the 40-char sha
     // that starts each hunk header. "author" and "author-time" lines are cached per sha;
     // "\t" lines emit one (timestamp, author) pair.
@@ -69,8 +69,5 @@ pub fn parse_blame_output(stdout: &[u8], blob_oid: Oid, cache: &sled::Db) -> Vec
         }
     }
 
-    if let Ok(encoded) = bincode::serialize(&lines) {
-        let _ = cache.insert(blob_oid.as_bytes(), encoded.as_slice());
-    }
     lines
 }
