@@ -226,11 +226,15 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
                         None
                     }
                     .unwrap_or_else(|| {
-                        spawn_blame(&repo_path, *commit_oid, file_path)
+                        let lines = spawn_blame(&repo_path, *commit_oid, file_path)
                             .and_then(|child| child.wait_with_output().ok())
                             .filter(|o| o.status.success())
-                            .map(|o| parse_blame_output(&o.stdout, blob_oid, &cache))
-                            .unwrap_or_default()
+                            .map(|o| parse_blame_output(&o.stdout))
+                            .unwrap_or_default();
+                        if let Ok(encoded) = bincode::serialize(&lines) {
+                            let _ = cache.insert(blob_oid.as_bytes(), encoded.as_slice());
+                        }
+                        lines
                     });
                     pb.inc(1);
                     let mut period_hist: FxHashMap<i32, u64> = FxHashMap::default();
