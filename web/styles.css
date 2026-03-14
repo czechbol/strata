@@ -315,6 +315,23 @@ canvas.dragging {
   align-items: center;
   gap: 6px;
   line-height: 1.4;
+  border-radius: 3px;
+  padding: 1px 3px;
+  margin: 0 -3px;
+  transition: opacity 0.15s;
+}
+
+.legend-item:hover {
+  background: var(--bg-input-hover);
+}
+
+.legend-item--hidden {
+  opacity: 0.45;
+}
+
+.legend-item--hidden .legend-label {
+  text-decoration: line-through;
+  color: var(--text-muted);
 }
 
 .legend-swatch {

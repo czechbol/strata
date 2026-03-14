@@ -90,6 +90,8 @@ let hoveredTs = null;
 let viewMode = 'period'; // 'period' | 'author'
 let authorColors = null; // Map<authorName, hexColor>, precomputed at loadRepo time
 let showLegend = true;
+let hiddenPeriods = new Set(); // Set<periodIndex>
+let hiddenAuthors = new Set();  // Set<authorName>
 
 const tooltip = document.getElementById('tooltip');
 
@@ -196,6 +198,9 @@ async function loadRepo(name) {
       s.counts = expandSparse(s.counts, nPeriods);
       s.author_counts = expandSparse(s.author_counts || [], nAuthors);
     }
+
+    hiddenPeriods = new Set();
+    hiddenAuthors = new Set();
 
     const tss = data.series.map(s => s.ts);
     let tMin = tss[0], tMax = tss[0];
@@ -316,6 +321,7 @@ function drawPeriodBands(bctx, visible, stacks, nPeriods, xScale, yScale) {
   );
 
   for (let j = 0; j < nPeriods; j++) {
+    if (hiddenPeriods.has(j)) continue;
     bctx.beginPath();
     for (let i = 0; i < visible.length; i++) {
       const x = xScale(visible[i].ts);
@@ -354,13 +360,14 @@ function drawAuthorBands(bctx, visible, xScale, yScale) {
     const cum = new Float64Array(nAuthors);
     let acc = 0;
     for (let j = 0; j < nAuthors; j++) {
-      acc += (s.author_counts && s.author_counts[j]) || 0;
+      if (!hiddenAuthors.has(data.authors[j])) acc += (s.author_counts && s.author_counts[j]) || 0;
       cum[j] = acc;
     }
     return cum;
   });
 
   for (let j = 0; j < nAuthors; j++) {
+    if (hiddenAuthors.has(data.authors[j])) continue;
     bctx.fillStyle = authorColors.get(data.authors[j]) || OTHER_COLOR;
     bctx.beginPath();
 
@@ -434,13 +441,29 @@ function render() {
     cachedStacks = visibleRender.map(s => {
       const cum = new Float64Array(nPeriods);
       let acc = 0;
-      for (let j = 0; j < nPeriods; j++) { acc += s.counts[j] || 0; cum[j] = acc; }
+      for (let j = 0; j < nPeriods; j++) {
+        if (!hiddenPeriods.has(j)) acc += s.counts[j] || 0;
+        cum[j] = acc;
+      }
       return cum;
     });
-    cachedMaxTotal = 0;
-    for (const c of cachedStacks) {
-      const v = c[nPeriods - 1] || 0;
-      if (v > cachedMaxTotal) cachedMaxTotal = v;
+
+    if (viewMode === 'author' && data.authors && data.authors.length) {
+      cachedMaxTotal = 0;
+      const nAuthors = data.authors.length;
+      for (const s of visibleRender) {
+        let total = 0;
+        for (let j = 0; j < nAuthors; j++) {
+          if (!hiddenAuthors.has(data.authors[j])) total += (s.author_counts && s.author_counts[j]) || 0;
+        }
+        if (total > cachedMaxTotal) cachedMaxTotal = total;
+      }
+    } else {
+      cachedMaxTotal = 0;
+      for (const c of cachedStacks) {
+        const v = c[nPeriods - 1] || 0;
+        if (v > cachedMaxTotal) cachedMaxTotal = v;
+      }
     }
 
     const bctx = bandCtx;
@@ -698,7 +721,10 @@ function hitTestAndShowTooltip(clientX, clientY) {
   const nPeriods = data.periods.length;
   const cum = new Float64Array(nPeriods);
   let acc = 0;
-  for (let j = 0; j < nPeriods; j++) { acc += nearest.counts[j] || 0; cum[j] = acc; }
+  for (let j = 0; j < nPeriods; j++) {
+    if (!hiddenPeriods.has(j)) acc += nearest.counts[j] || 0;
+    cum[j] = acc;
+  }
   const snapTotal = cum[nPeriods - 1];
 
   const canvasY = (clientY - rect.top) * dpr;
@@ -707,6 +733,7 @@ function hitTestAndShowTooltip(clientX, clientY) {
     const val = (margin.top + plotH - canvasY) / plotH * cachedMaxTotal;
     if (viewMode === 'period') {
       for (let j = 0; j < nPeriods; j++) {
+        if (hiddenPeriods.has(j)) continue;
         if (val <= cum[j]) {
           const pct = snapTotal > 0 ? (nearest.counts[j] / snapTotal * 100).toFixed(1) : '0';
           hoveredBand = { label: 'period', name: data.periods[j], pct };
@@ -718,10 +745,11 @@ function hitTestAndShowTooltip(clientX, clientY) {
       const authorCum = new Float64Array(nAuthors);
       let accA = 0;
       for (let j = 0; j < nAuthors; j++) {
-        accA += nearest.author_counts[j] || 0;
+        if (!hiddenAuthors.has(data.authors[j])) accA += nearest.author_counts[j] || 0;
         authorCum[j] = accA;
       }
       for (let j = 0; j < nAuthors; j++) {
+        if (hiddenAuthors.has(data.authors[j])) continue;
         if (val <= authorCum[j]) {
           const pct = snapTotal > 0 ? ((nearest.author_counts[j] || 0) / snapTotal * 100).toFixed(1) : '0';
           hoveredBand = { label: 'author', name: data.authors[j], pct };
@@ -1035,18 +1063,20 @@ function updateLegend() {
     if (mobile) {
       for (let j = 0; j < nPeriods; j += step) {
         const color = periodInterpolator(nPeriods <= 1 ? 0 : j / (nPeriods - 1));
-        legendEl.appendChild(makeLegendItem(color, data.periods[j]));
+        const idx = j;
+        legendEl.appendChild(makeLegendItem(color, data.periods[j], () => togglePeriod(idx), !hiddenPeriods.has(idx)));
       }
     } else {
       for (let j = nPeriods - 1; j >= 0; j -= step) {
         const color = periodInterpolator(nPeriods <= 1 ? 0 : j / (nPeriods - 1));
-        legendEl.appendChild(makeLegendItem(color, data.periods[j]));
+        const idx = j;
+        legendEl.appendChild(makeLegendItem(color, data.periods[j], () => togglePeriod(idx), !hiddenPeriods.has(idx)));
       }
     }
   } else if (data.authors) {
     for (const author of data.authors) {
       const color = authorColors ? (authorColors.get(author) || OTHER_COLOR) : OTHER_COLOR;
-      legendEl.appendChild(makeLegendItem(color, author));
+      legendEl.appendChild(makeLegendItem(color, author, () => toggleAuthor(author), !hiddenAuthors.has(author)));
     }
   }
   resetLegendSize();
@@ -1079,12 +1109,33 @@ function resetLegendSize() {
   }
 }
 
-function makeLegendItem(color, label) {
+function togglePeriod(j) {
+  if (hiddenPeriods.has(j)) hiddenPeriods.delete(j);
+  else hiddenPeriods.add(j);
+  invalidateBands();
+  scheduleRender();
+  updateLegend();
+}
+
+function toggleAuthor(name) {
+  if (hiddenAuthors.has(name)) hiddenAuthors.delete(name);
+  else hiddenAuthors.add(name);
+  invalidateBands();
+  scheduleRender();
+  updateLegend();
+}
+
+function makeLegendItem(color, label, onClick, isActive = true) {
   const item = document.createElement('div');
-  item.className = 'legend-item';
+  item.className = 'legend-item' + (isActive ? '' : ' legend-item--hidden');
+  if (onClick) {
+    item.style.cursor = 'pointer';
+    item.addEventListener('click', onClick);
+  }
   const swatch = document.createElement('span');
   swatch.className = 'legend-swatch';
-  swatch.style.background = color;
+  swatch.style.background = isActive ? color : 'transparent';
+  swatch.style.border = isActive ? '' : '1.5px solid ' + color;
   const text = document.createElement('span');
   text.className = 'legend-label';
   text.textContent = label;
