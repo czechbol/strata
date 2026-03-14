@@ -69,6 +69,12 @@ struct ProcessArgs {
     #[arg(long = "author-threshold", default_value = "0.80")]
     author_threshold: f64,
 
+    #[arg(long, help = "Glob patterns to include, comma-separated (e.g. 'src/**,lib/**')")]
+    include: Option<String>,
+
+    #[arg(long, help = "Glob patterns to exclude, comma-separated (e.g. 'tests/**,vendor/**')")]
+    exclude: Option<String>,
+
     /// Maximum number of parallel blame processes (default: 8; raise to go faster at the cost of CPU/IO)
     #[arg(short = 'j', long = "jobs", default_value = "8")]
     jobs: usize,
@@ -83,6 +89,15 @@ struct ServeArgs {
     /// Port to listen on
     #[arg(short = 'p', long, default_value = "8080")]
     port: u16,
+}
+
+fn build_glob_set(patterns: Option<String>) -> Result<Option<globset::GlobSet>> {
+    let Some(raw) = patterns else { return Ok(None) };
+    let mut builder = globset::GlobSetBuilder::new();
+    for pat in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        builder.add(globset::Glob::new(pat)?);
+    }
+    Ok(Some(builder.build()?))
 }
 
 fn init_tracing(verbose: u8) {
@@ -130,6 +145,8 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
     let extensions: Option<Vec<String>> = args.extensions.map(|e| {
         e.split(',').map(|s| s.trim().to_string()).collect()
     });
+    let include_set = build_glob_set(args.include)?;
+    let exclude_set = build_glob_set(args.exclude)?;
 
     fs::create_dir_all(&args.output_dir)?;
 
@@ -159,7 +176,7 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
     // collect_work_items returns compact (commit_oid, blob_oid) pairs plus a
     // deduplicated blame_lookup: one (commit_oid, path) per unique blob.
     // Keeping file_path out of every WorkItem avoids O(commits × files) String allocations.
-    let (items, blame_lookup) = collect_work_items(&repo_path, &sampled, &extensions)?;
+    let (items, blame_lookup) = collect_work_items(&repo_path, &sampled, &extensions, &include_set, &exclude_set)?;
     let unique_count = blame_lookup.len();
     let dedup_pct = (1.0 - unique_count as f64 / items.len().max(1) as f64) * 100.0;
     info!(
