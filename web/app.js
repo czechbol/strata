@@ -1,11 +1,11 @@
-import { decode as msgpackDecode } from 'https://cdn.jsdelivr.net/npm/@msgpack/msgpack@3/+esm';
+import { decode as msgpackDecode } from './msgpack.js';
 import {
   interpolateTurbo, interpolateViridis, interpolatePlasma,
   interpolateInferno, interpolateMagma, interpolateCividis,
   interpolateSpectral, interpolateRainbow, interpolateCool, interpolateWarm,
   schemeTableau10, schemeCategory10, schemeSet2, schemeSet3,
   schemeDark2, schemePaired, schemeAccent,
-} from 'https://cdn.jsdelivr.net/npm/d3-scale-chromatic@3/+esm';
+} from './d3-scale-chromatic.js';
 
 const PERIOD_SCHEMES = {
   Turbo: interpolateTurbo,

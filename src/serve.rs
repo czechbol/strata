@@ -12,6 +12,8 @@ use tokio::fs;
 const INDEX_HTML: &[u8] = include_bytes!("../web/index.html");
 const APP_JS: &[u8] = include_bytes!("../web/app.js");
 const STYLES_CSS: &[u8] = include_bytes!("../web/styles.css");
+const MSGPACK_JS: &[u8] = include_bytes!("../web/msgpack.js");
+const D3_CHROMATIC_JS: &[u8] = include_bytes!("../web/d3-scale-chromatic.js");
 
 async fn root() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], INDEX_HTML)
@@ -26,6 +28,20 @@ async fn app_js() -> impl IntoResponse {
 
 async fn styles_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], STYLES_CSS)
+}
+
+async fn msgpack_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        MSGPACK_JS,
+    )
+}
+
+async fn d3_chromatic_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        D3_CHROMATIC_JS,
+    )
 }
 
 async fn data_file(
@@ -58,6 +74,8 @@ pub async fn serve(dir: PathBuf, port: u16) -> Result<()> {
         .route("/", get(root))
         .route("/app.js", get(app_js))
         .route("/styles.css", get(styles_css))
+        .route("/msgpack.js", get(msgpack_js))
+        .route("/d3-scale-chromatic.js", get(d3_chromatic_js))
         .route("/data/:file", get(data_file))
         .with_state(dir);
 
