@@ -8,6 +8,7 @@ use axum::{
 };
 use std::path::PathBuf;
 use tokio::fs;
+use tracing::warn;
 
 const INDEX_HTML: &[u8] = include_bytes!("../web/index.html");
 const APP_JS: &[u8] = include_bytes!("../web/app.js");
@@ -58,14 +59,15 @@ async fn data_file(
         Ok(bytes) => {
             let content_type = if file.ends_with(".json") {
                 "application/json"
-            } else if file.ends_with(".msgpack") {
-                "application/octet-stream"
             } else {
                 "application/octet-stream"
             };
             ([(header::CONTENT_TYPE, content_type)], bytes).into_response()
         }
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            warn!("data file read error: {e}");
+            StatusCode::NOT_FOUND.into_response()
+        }
     }
 }
 
