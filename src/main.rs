@@ -400,7 +400,7 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
     let unique_count = blame_lookup.len();
     let dedup_pct = (1.0 - unique_count as f64 / items.len().max(1) as f64) * 100.0;
     info!(
-        "{} work items → {} unique blobs ({dedup_pct:.0}% deduplicated)",
+        "{} work items → {} unique blobs ({dedup_pct:.2}% deduplicated)",
         items.len(), unique_count
     );
 
