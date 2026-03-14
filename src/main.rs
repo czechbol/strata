@@ -152,6 +152,7 @@ fn run_blame_phase(
     pool: &rayon::ThreadPool,
     pb: &ProgressBar,
     yearly: bool,
+    ignore_revs: Option<&Path>,
 ) -> (BlobHists, u64) {
     let cache_hits = std::sync::atomic::AtomicU64::new(0);
     let blob_hists = pool.install(|| {
@@ -171,7 +172,7 @@ fn run_blame_phase(
                     None
                 }
                 .unwrap_or_else(|| {
-                    let lines = spawn_blame(repo_path, *commit_oid, file_path)
+                    let lines = spawn_blame(repo_path, *commit_oid, file_path, ignore_revs)
                         .and_then(|child| child.wait_with_output().ok())
                         .filter(|o| o.status.success())
                         .map(|o| parse_blame_output(&o.stdout))
@@ -355,6 +356,16 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
     let repo_path = ensure_repo(&args.repo, args.ssh_key)?;
     let name = repo_name(&args.repo);
 
+    let ignore_revs_file = {
+        let candidate = repo_path.join(".git-blame-ignore-revs");
+        if candidate.is_file() {
+            info!("using .git-blame-ignore-revs at {}", candidate.display());
+            Some(candidate)
+        } else {
+            None
+        }
+    };
+
     info!("Walking commit history");
     let all_commits = get_commit_list(&repo_path)?;
     let sampled = sample_commits(all_commits, args.samples);
@@ -386,6 +397,7 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
     // dropped as each closure returns, so we never hold all blame output in memory.
     let (blob_hists, hits) = run_blame_phase(
         &blame_lookup, &repo_path, args.no_cache, &cache, &blame_pool, &pb, yearly,
+        ignore_revs_file.as_deref(),
     );
 
     pb.finish_and_clear();

@@ -88,7 +88,7 @@ strata/
 
 5. **Blob deduplication** (`main.rs`) — Group work items by blob OID. If the same file content appears in 50 sampled commits, it only needs one blame call. The dedup ratio is logged at `-v`.
 
-6. **Parallel blame** (`blame.rs`) — A dedicated Rayon pool (size controlled by `--jobs`, default 8 — see [why](#parallel-blame-thread-pool)) runs blame for each unique blob. Each thread checks the sled cache first; on a miss it spawns `git blame --porcelain` and stores the result.
+6. **Parallel blame** (`blame.rs`) — A dedicated Rayon pool (size controlled by `--jobs`, default 8 — see [why](#parallel-blame-thread-pool)) runs blame for each unique blob. Each thread checks the sled cache first; on a miss it spawns `git blame --porcelain -w` (plus `--ignore-revs-file` if `.git-blame-ignore-revs` exists in the repo root) and stores the result.
 
 7. **Aggregation** (`main.rs`) — Two passes:
    - **Per-blob histogram**: for each blob, count lines per period key and per author. Run in parallel.
@@ -118,7 +118,7 @@ Entry point and orchestration. Owns:
 
 Two public functions:
 
-**`spawn_blame(repo_path, commit_oid, file_path)`** — Spawns `git blame --porcelain <commit> -- <file>` as a subprocess with `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, and `GIT_OPTIONAL_LOCKS=0` to eliminate per-process config-file overhead across thousands of concurrent invocations.
+**`spawn_blame(repo_path, commit_oid, file_path, ignore_revs)`** — Spawns `git blame --porcelain -w <commit> -- <file>` as a subprocess with `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, and `GIT_OPTIONAL_LOCKS=0` to eliminate per-process config-file overhead across thousands of concurrent invocations. `-w` is always passed so whitespace-only changes don't shift attribution. If `ignore_revs` is `Some(path)`, `--ignore-revs-file=<path>` is appended to skip bulk commits (e.g. formatting runs) from attribution.
 
 **`parse_blame_output(stdout, blob_oid, cache)`** — Parses the porcelain format line by line. Commit metadata (author name, author-time) appears once per commit in the output; subsequent lines for the same commit reference the cached values. Emits one `(timestamp, author)` pair per source line. Stores the result in sled keyed by blob OID before returning.
 
@@ -192,6 +192,8 @@ pub struct Tag {
 
 libgit2's `blame_file()` is roughly 100× slower than the system `git blame` binary for the same file. strata shells out to `git` for all blame work. The subprocess environment is stripped to the minimum (`GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_OPTIONAL_LOCKS=0`) to shave config-reading overhead across thousands of concurrent invocations.
 
+`-w` is always passed so whitespace-only reformatting commits don't shift authorship credit. If the repo root contains a `.git-blame-ignore-revs` file, `--ignore-revs-file` is passed automatically — `GIT_CONFIG_GLOBAL=/dev/null` would otherwise suppress any config-based `blame.ignoreRevsFile`, so strata detects the file itself and injects the flag directly.
+
 libgit2 is still used for everything else — commit walking, tree walking, SSH credential handling — where it's fast and convenient.
 
 ### Parallel blame thread pool
@@ -212,6 +214,8 @@ Blame results are stored in a [sled](https://github.com/spacejam/sled) embedded 
 - **Content-addressed** — renaming or moving a file doesn't invalidate its entry
 
 Cache entries are serialised with [bincode](https://github.com/bincode-org/bincode) as `Vec<(i64, String)>` (timestamp, author name).
+
+> **Upgrade note:** `-w` changes which commit git attributes each line to, so cache entries produced by older versions of strata (without `-w`) will return stale results. Run with `--no-cache` once after upgrading to force a clean recompute.
 
 ### Two-pass aggregation
 
