@@ -32,6 +32,21 @@ struct Cli {
     command: Command,
 }
 
+#[derive(clap::ValueEnum, Debug, Clone, PartialEq)]
+enum Granularity {
+    Quarter,
+    Year,
+}
+
+impl std::fmt::Display for Granularity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Granularity::Quarter => write!(f, "quarter"),
+            Granularity::Year => write!(f, "year"),
+        }
+    }
+}
+
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Analyze repositories and write data files
@@ -52,7 +67,7 @@ struct ProcessArgs {
     extensions: Option<String>,
 
     #[arg(short = 'g', long, default_value = "quarter", help = "Granularity: quarter or year")]
-    granularity: String,
+    granularity: Granularity,
 
     #[arg(short = 'o', long, default_value = "web/data", help = "Output directory for data files")]
     output_dir: PathBuf,
@@ -197,7 +212,7 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
 
     let no_cache = args.no_cache;
     let cache_hits = std::sync::atomic::AtomicU64::new(0);
-    let yearly = args.granularity == "year";
+    let yearly = args.granularity == Granularity::Year;
 
     // Dedicated rayon pool sized for subprocess-bound work (not CPU-bound),
     // so we can saturate I/O without starving the global pool.
@@ -388,7 +403,7 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
 
     let output = OutputData {
         repo: name.clone(),
-        granularity: args.granularity,
+        granularity: args.granularity.to_string(),
         generated_at: chrono::Utc::now().to_rfc3339(),
         head_commit,
         periods: all_periods,
