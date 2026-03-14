@@ -83,11 +83,13 @@ const selectEl = document.getElementById('repo-select');
 const metaEl = document.getElementById('meta');
 
 let data = null;
+let dataMin = NaN, dataMax = NaN; // set on repo load
 let viewport = { xMin: 0, xMax: 1 };
 let drag = null; // { startX, origXMin, origXMax } when dragging
 let hoveredTs = null;
 let viewMode = 'period'; // 'period' | 'author'
 let authorColors = null; // Map<authorName, hexColor>, precomputed at loadRepo time
+let showLegend = true;
 
 const tooltip = document.getElementById('tooltip');
 
@@ -198,8 +200,9 @@ async function loadRepo(name) {
     const tss = data.series.map(s => s.ts);
     let tMin = tss[0], tMax = tss[0];
     for (const t of tss) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
-    const pad = (tMax - tMin) * 0.03 || 3600 * 24 * 30;
-    viewport = { xMin: tMin - pad, xMax: tMax + pad };
+    dataMin = tMin;
+    dataMax = tMax;
+    viewport = { xMin: dataMin, xMax: dataMax };
 
     // Precompute stable author→color mapping once per repo load
     authorColors = new Map();
@@ -220,6 +223,7 @@ async function loadRepo(name) {
     statusEl.textContent = '';
     invalidateBands();
     scheduleRender();
+    updateLegend();
   } catch (e) {
     statusEl.textContent = `Failed to load ${name}: ${e.message}`;
   }
@@ -445,11 +449,16 @@ function render() {
     if (cachedMaxTotal > 0) {
       const yScale = val => margin.top + plotH - (val / cachedMaxTotal) * plotH;
 
+      bctx.save();
+      bctx.beginPath();
+      bctx.rect(margin.left, margin.top, plotW, plotH);
+      bctx.clip();
       if (viewMode === 'period') {
         drawPeriodBands(bctx, visibleRender, cachedStacks, nPeriods, xScale, yScale);
       } else {
         drawAuthorBands(bctx, visibleRender, xScale, yScale);
       }
+      bctx.restore();
 
       drawAxes(bctx, margin, plotW, plotH, xMin, xMax, xRange, cachedMaxTotal, xScale, yScale, dpr);
 
@@ -597,6 +606,24 @@ function formatDate(ts) {
 
 // ── Zoom & pan ────────────────────────────────────────────────────────────────
 
+function clampViewport() {
+  const fullRange = dataMax - dataMin;
+  const MIN_SPAN = fullRange > 0 ? fullRange * 0.001 : 1;
+  let { xMin, xMax } = viewport;
+  const span = Math.max(xMax - xMin, MIN_SPAN);
+  // Clamp zoom-out to data extent
+  if (span >= fullRange) {
+    viewport = { xMin: dataMin, xMax: dataMax };
+    return;
+  }
+  // Clamp pan to data bounds
+  if (xMin < dataMin) {
+    viewport = { xMin: dataMin, xMax: dataMin + span };
+  } else if (xMax > dataMax) {
+    viewport = { xMin: dataMax - span, xMax: dataMax };
+  }
+}
+
 canvas.addEventListener('wheel', e => {
   if (!data) return;
   e.preventDefault();
@@ -610,6 +637,7 @@ canvas.addEventListener('wheel', e => {
     xMin: center - (center - xMin) * factor,
     xMax: center + (xMax - center) * factor,
   };
+  clampViewport();
   invalidateBands();
   scheduleRender();
 }, { passive: false });
@@ -747,6 +775,7 @@ canvas.addEventListener('touchmove', e => {
       xMin: center - (center - origXMin) * scale,
       xMax: center + (origXMax - center) * scale,
     };
+    clampViewport();
     invalidateBands();
     scheduleRender();
   } else if (e.touches.length === 1 && touchDrag) {
@@ -759,6 +788,7 @@ canvas.addEventListener('touchmove', e => {
       xMin: touchDrag.origXMin - (dx / rect.width) * range,
       xMax: touchDrag.origXMax - (dx / rect.width) * range,
     };
+    clampViewport();
     invalidateBands();
     scheduleRender();
   }
@@ -878,6 +908,7 @@ window.addEventListener('mousemove', e => {
     xMin: drag.origXMin - dxFrac * range,
     xMax: drag.origXMax - dxFrac * range,
   };
+  clampViewport();
   invalidateBands();
   scheduleRender();
 });
@@ -891,17 +922,187 @@ window.addEventListener('resize', () => {
   if (data) {
     invalidateBands();
     scheduleRender();
+    updateLegend();
   }
 });
 
-// ── View switcher ─────────────────────────────────────────────────────────────
+// ── Legend ────────────────────────────────────────────────────────────────────
 
-document.querySelectorAll('.view-btn').forEach(btn => {
+const legendEl = document.getElementById('legend');
+const legendHandleEl = document.getElementById('legend-handle');
+
+document.querySelectorAll('[data-legend-btn]').forEach(btn => {
   btn.addEventListener('click', () => {
-    viewMode = btn.dataset.view;
-    document.querySelectorAll('.view-btn').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('[data-legend-btn]').forEach(b => b.classList.toggle('active', b === btn));
+    showLegend = btn.dataset.legendBtn === 'on';
+    // Clear any inline size from a previous resize session
+    legendEl.style.width = '';
+    legendEl.style.height = '';
+    legendEl.style.maxHeight = '';
+    updateLegend();
     invalidateBands();
     scheduleRender();
+  });
+});
+
+// ── Legend resize handle ───────────────────────────────────────────────────────
+
+let legendResize = null; // { mobile, startPos, startSize }
+
+function startLegendResize(pos) {
+  const mobile = window.matchMedia('(max-width: 640px)').matches;
+  // Measure natural content size by briefly removing size constraints
+  let maxSize;
+  if (mobile) {
+    const prev = { h: legendEl.style.height, mh: legendEl.style.maxHeight };
+    legendEl.style.height = 'auto';
+    legendEl.style.maxHeight = 'none';
+    maxSize = legendEl.scrollHeight;
+    legendEl.style.height = prev.h;
+    legendEl.style.maxHeight = prev.mh;
+  } else {
+    const prev = legendEl.style.width;
+    legendEl.style.width = 'max-content';
+    maxSize = legendEl.offsetWidth;
+    legendEl.style.width = prev;
+  }
+  legendResize = {
+    mobile,
+    startPos: mobile ? pos.y : pos.x,
+    startSize: mobile ? legendEl.offsetHeight : legendEl.offsetWidth,
+    maxSize,
+  };
+  legendHandleEl.classList.add('dragging');
+}
+
+function moveLegendResize(pos) {
+  if (!legendResize) return;
+  const { mobile, startPos, startSize, maxSize } = legendResize;
+  if (mobile) {
+    const delta = startPos - pos.y;
+    legendEl.style.maxHeight = 'none';
+    legendEl.style.height = Math.min(maxSize, Math.max(48, startSize + delta)) + 'px';
+  } else {
+    const delta = startPos - pos.x;
+    legendEl.style.width = Math.min(maxSize, Math.max(80, startSize + delta)) + 'px';
+  }
+}
+
+function endLegendResize() {
+  if (!legendResize) return;
+  legendHandleEl.classList.remove('dragging');
+  legendResize = null;
+  scheduleRender();
+}
+
+legendHandleEl.addEventListener('mousedown', e => {
+  e.preventDefault();
+  startLegendResize({ x: e.clientX, y: e.clientY });
+});
+
+legendHandleEl.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  startLegendResize({ x: t.clientX, y: t.clientY });
+}, { passive: false });
+
+window.addEventListener('mousemove', e => {
+  if (legendResize) moveLegendResize({ x: e.clientX, y: e.clientY });
+});
+
+window.addEventListener('touchmove', e => {
+  if (legendResize) { e.preventDefault(); moveLegendResize({ x: e.touches[0].clientX, y: e.touches[0].clientY }); }
+}, { passive: false });
+
+window.addEventListener('mouseup', endLegendResize);
+window.addEventListener('touchend', endLegendResize);
+
+function updateLegend() {
+  if (!showLegend || !data) {
+    legendEl.hidden = true;
+    legendHandleEl.hidden = true;
+    return;
+  }
+  legendEl.hidden = false;
+  legendHandleEl.hidden = false;
+  legendEl.replaceChildren();
+
+  const mobile = window.matchMedia('(max-width: 640px)').matches;
+  if (viewMode === 'period') {
+    const nPeriods = data.periods.length;
+    const maxItems = 40;
+    const step = nPeriods <= maxItems ? 1 : Math.ceil(nPeriods / maxItems);
+    if (mobile) {
+      for (let j = 0; j < nPeriods; j += step) {
+        const color = periodInterpolator(nPeriods <= 1 ? 0 : j / (nPeriods - 1));
+        legendEl.appendChild(makeLegendItem(color, data.periods[j]));
+      }
+    } else {
+      for (let j = nPeriods - 1; j >= 0; j -= step) {
+        const color = periodInterpolator(nPeriods <= 1 ? 0 : j / (nPeriods - 1));
+        legendEl.appendChild(makeLegendItem(color, data.periods[j]));
+      }
+    }
+  } else if (data.authors) {
+    for (const author of data.authors) {
+      const color = authorColors ? (authorColors.get(author) || OTHER_COLOR) : OTHER_COLOR;
+      legendEl.appendChild(makeLegendItem(color, author));
+    }
+  }
+  resetLegendSize();
+}
+
+function resetLegendSize() {
+  const mobile = window.matchMedia('(max-width: 640px)').matches;
+  if (mobile) {
+    // Clear any desktop-set width when on mobile
+    legendEl.style.width = '';
+    if (!legendEl.style.height) return;
+    const prevH = legendEl.style.height;
+    const prevMH = legendEl.style.maxHeight;
+    legendEl.style.height = 'auto';
+    legendEl.style.maxHeight = 'none';
+    const naturalH = legendEl.scrollHeight;
+    legendEl.style.height = prevH;
+    legendEl.style.maxHeight = prevMH;
+    if (parseInt(prevH) > naturalH) legendEl.style.height = naturalH + 'px';
+  } else {
+    // Clear any mobile-set height when on desktop
+    legendEl.style.height = '';
+    legendEl.style.maxHeight = '';
+    if (!legendEl.style.width) return;
+    const prevW = legendEl.style.width;
+    legendEl.style.width = 'max-content';
+    const naturalW = legendEl.offsetWidth;
+    legendEl.style.width = prevW;
+    if (parseInt(prevW) > naturalW) legendEl.style.width = naturalW + 'px';
+  }
+}
+
+function makeLegendItem(color, label) {
+  const item = document.createElement('div');
+  item.className = 'legend-item';
+  const swatch = document.createElement('span');
+  swatch.className = 'legend-swatch';
+  swatch.style.background = color;
+  const text = document.createElement('span');
+  text.className = 'legend-label';
+  text.textContent = label;
+  text.title = label;
+  item.append(swatch, text);
+  return item;
+}
+
+// ── View switcher ─────────────────────────────────────────────────────────────
+
+const viewSwitcher = document.getElementById('view-switcher');
+viewSwitcher.querySelectorAll('.view-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    viewMode = btn.dataset.view;
+    viewSwitcher.querySelectorAll('.view-btn').forEach(b => b.classList.toggle('active', b === btn));
+    invalidateBands();
+    scheduleRender();
+    updateLegend();
   });
 });
 
@@ -937,6 +1138,7 @@ document.getElementById('period-scheme-select').addEventListener('change', e => 
   periodInterpolator = PERIOD_SCHEMES[e.target.value];
   invalidateBands();
   scheduleRender();
+  updateLegend();
 });
 
 document.getElementById('author-scheme-select').addEventListener('change', e => {
@@ -954,6 +1156,7 @@ document.getElementById('author-scheme-select').addEventListener('change', e => 
   }
   invalidateBands();
   scheduleRender();
+  updateLegend();
 });
 
 // Update hint text for touch devices
