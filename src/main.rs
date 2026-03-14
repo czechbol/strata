@@ -7,19 +7,23 @@ mod types;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use git2::Repository;
+use git2::{Oid, Repository};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 use tracing_subscriber::{fmt, EnvFilter};
 
 use blame::{parse_blame_output, spawn_blame};
 use period::{get_version_tags, period_int_to_string, ts_to_period_int};
 use repo::{collect_work_items, ensure_repo, get_commit_list, repo_name, sample_commits};
-use types::{OutputData, SeriesPoint};
+use types::{OutputData, SeriesPoint, WorkItem};
+
+type BlobHists = FxHashMap<Oid, (FxHashMap<i32, u64>, FxHashMap<String, u64>)>;
+type PeriodAgg = FxHashMap<(Oid, i32), u64>;
+type AuthorAgg = FxHashMap<(Oid, String), u64>;
 
 #[derive(Parser, Debug)]
 #[command(name = "strata", about = "Git code archaeology — fast parallel blame aggregator")]
@@ -30,6 +34,14 @@ struct Cli {
 
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Analyze repositories and write data files
+    Process(ProcessArgs),
+    /// Serve the web UI with embedded assets
+    Serve(ServeArgs),
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, PartialEq)]
@@ -45,14 +57,6 @@ impl std::fmt::Display for Granularity {
             Granularity::Year => write!(f, "year"),
         }
     }
-}
-
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// Analyze repositories and write data files
-    Process(ProcessArgs),
-    /// Serve the web UI with embedded assets
-    Serve(ServeArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -152,6 +156,192 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn build_blame_pool(jobs: usize) -> Result<rayon::ThreadPool> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .build()
+        .context("failed to create blame thread pool")
+}
+
+fn run_blame_phase(
+    blame_lookup: &FxHashMap<Oid, (Oid, String)>,
+    repo_path: &Path,
+    no_cache: bool,
+    cache: &sled::Db,
+    pool: &rayon::ThreadPool,
+    pb: &ProgressBar,
+    yearly: bool,
+) -> (BlobHists, u64) {
+    let cache_hits = std::sync::atomic::AtomicU64::new(0);
+    let blob_hists = pool.install(|| {
+        blame_lookup
+            .par_iter()
+            .map(|(&blob_oid, (commit_oid, file_path))| {
+                let lines = if !no_cache {
+                    cache
+                        .get(blob_oid.as_bytes())
+                        .ok()
+                        .flatten()
+                        .and_then(|v| bincode::deserialize::<Vec<(i64, String)>>(&v).ok())
+                        .inspect(|_| {
+                            cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        })
+                } else {
+                    None
+                }
+                .unwrap_or_else(|| {
+                    let lines = spawn_blame(repo_path, *commit_oid, file_path)
+                        .and_then(|child| child.wait_with_output().ok())
+                        .filter(|o| o.status.success())
+                        .map(|o| parse_blame_output(&o.stdout))
+                        .unwrap_or_default();
+                    if let Ok(encoded) = bincode::serialize(&lines) {
+                        let _ = cache.insert(blob_oid.as_bytes(), encoded.as_slice());
+                    }
+                    lines
+                });
+                pb.inc(1);
+                let mut period_hist: FxHashMap<i32, u64> = FxHashMap::default();
+                let mut author_hist: FxHashMap<String, u64> = FxHashMap::default();
+                for (lts, author) in lines {
+                    *period_hist.entry(ts_to_period_int(lts, yearly)).or_insert(0) += 1;
+                    *author_hist.entry(author).or_insert(0) += 1;
+                }
+                (blob_oid, (period_hist, author_hist))
+            })
+            .collect()
+    });
+    let hits = cache_hits.load(std::sync::atomic::Ordering::Relaxed);
+    (blob_hists, hits)
+}
+
+fn aggregate(items: &[WorkItem], blob_hists: &BlobHists) -> (PeriodAgg, AuthorAgg) {
+    let mut agg: PeriodAgg = FxHashMap::default();
+    let mut author_agg: AuthorAgg = FxHashMap::default();
+    for item in items {
+        let Some((period_hist, author_hist)) = blob_hists.get(&item.blob_oid) else { continue };
+        for (&period, &count) in period_hist {
+            *agg.entry((item.commit_oid, period)).or_insert(0) += count;
+        }
+        for (author, &count) in author_hist {
+            *author_agg.entry((item.commit_oid, author.clone())).or_insert(0) += count;
+        }
+    }
+    (agg, author_agg)
+}
+
+fn select_authors(
+    author_agg: &AuthorAgg,
+    sampled: &[(Oid, i64)],
+    threshold: f64,
+) -> (Vec<String>, bool, FxHashMap<Oid, u64>) {
+    let active_authors: Vec<String> = if let Some(&(last_oid, _)) = sampled.last() {
+        let mut head_counts: Vec<(String, u64)> = author_agg
+            .iter()
+            .filter(|((oid, _), _)| *oid == last_oid)
+            .map(|((_, author), &count)| (author.clone(), count))
+            .collect();
+        head_counts.sort_by(|a, b| b.1.cmp(&a.1));
+        let total: u64 = head_counts.iter().map(|(_, c)| c).sum();
+        let target = (total as f64 * threshold) as u64;
+        let mut cumulative = 0u64;
+        let mut active = Vec::new();
+        for (author, count) in head_counts {
+            active.push(author);
+            cumulative += count;
+            if cumulative >= target {
+                break;
+            }
+        }
+        active
+    } else {
+        Vec::new()
+    };
+
+    let active_author_set: FxHashSet<String> = active_authors.iter().cloned().collect();
+    let has_other = sampled.last().is_some_and(|&(last_oid, _)| {
+        author_agg.keys().any(|(oid, a)| *oid == last_oid && !active_author_set.contains(a))
+    });
+
+    let mut commit_other: FxHashMap<Oid, u64> = FxHashMap::default();
+    if has_other {
+        for ((oid, author), &count) in author_agg {
+            if !active_author_set.contains(author) {
+                *commit_other.entry(*oid).or_insert(0) += count;
+            }
+        }
+    }
+
+    (active_authors, has_other, commit_other)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_series(
+    sampled: &[(Oid, i64)],
+    agg: &PeriodAgg,
+    author_agg: &AuthorAgg,
+    active_authors: &[String],
+    has_other: bool,
+    commit_other: &FxHashMap<Oid, u64>,
+    all_period_ints: &[i32],
+    repo: &Repository,
+) -> Vec<SeriesPoint> {
+    sampled
+        .iter()
+        .map(|&(oid, ts)| {
+            let (summary, author) = repo
+                .find_commit(oid)
+                .ok()
+                .map(|c| (
+                    c.summary().unwrap_or("").to_string(),
+                    c.author().name().unwrap_or("unknown").to_string(),
+                ))
+                .unwrap_or_default();
+            let counts: Vec<(usize, u64)> = all_period_ints
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &p)| {
+                    let c = agg.get(&(oid, p)).copied().unwrap_or(0);
+                    if c > 0 { Some((i, c)) } else { None }
+                })
+                .collect();
+            let total: u64 = counts.iter().map(|(_, c)| c).sum();
+            let mut author_counts: Vec<(usize, u64)> = active_authors
+                .iter()
+                .enumerate()
+                .filter_map(|(i, a)| {
+                    let c = author_agg.get(&(oid, a.clone())).copied().unwrap_or(0);
+                    if c > 0 { Some((i, c)) } else { None }
+                })
+                .collect();
+            if has_other {
+                let c = commit_other.get(&oid).copied().unwrap_or(0);
+                if c > 0 { author_counts.push((active_authors.len(), c)); }
+            }
+            SeriesPoint { ts, total, counts, author_counts, summary, author }
+        })
+        .collect()
+}
+
+fn write_output(output: &OutputData, output_dir: &Path, name: &str) -> Result<()> {
+    let out_path = output_dir.join(format!("{name}.msgpack"));
+    fs::write(&out_path, rmp_serde::to_vec_named(output)?)?;
+    info!("Written {}", out_path.display());
+
+    let repos_path = output_dir.join("repos.json");
+    let mut repos: Vec<String> = if repos_path.exists() {
+        serde_json::from_str(&fs::read_to_string(&repos_path)?).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    if !repos.iter().any(|r| r == name) {
+        repos.push(name.to_string());
+        repos.sort();
+        fs::write(&repos_path, serde_json::to_string_pretty(&repos)?)?;
+    }
+    Ok(())
+}
+
 async fn run_process(args: ProcessArgs) -> Result<()> {
 
     #[cfg(feature = "profiling")]
@@ -210,60 +400,15 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
             .progress_chars("━━╾─"),
     );
 
-    let no_cache = args.no_cache;
-    let cache_hits = std::sync::atomic::AtomicU64::new(0);
     let yearly = args.granularity == Granularity::Year;
-
-    // Dedicated rayon pool sized for subprocess-bound work (not CPU-bound),
-    // so we can saturate I/O without starving the global pool.
-    let blame_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(args.jobs)
-        .build()
-        .context("failed to create blame thread pool")?;
+    let blame_pool = build_blame_pool(args.jobs)?;
 
     // Blame each unique blob and aggregate to histograms inline — raw lines are
     // dropped as each closure returns, so we never hold all blame output in memory.
-    let blob_hists: FxHashMap<_, (FxHashMap<i32, u64>, FxHashMap<String, u64>)> =
-        blame_pool.install(|| {
-            blame_lookup
-                .par_iter()
-                .map(|(&blob_oid, (commit_oid, file_path))| {
-                    let lines = if !no_cache {
-                        cache
-                            .get(blob_oid.as_bytes())
-                            .ok()
-                            .flatten()
-                            .and_then(|v| bincode::deserialize::<Vec<(i64, String)>>(&v).ok())
-                            .inspect(|_| {
-                                cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            })
-                    } else {
-                        None
-                    }
-                    .unwrap_or_else(|| {
-                        let lines = spawn_blame(&repo_path, *commit_oid, file_path)
-                            .and_then(|child| child.wait_with_output().ok())
-                            .filter(|o| o.status.success())
-                            .map(|o| parse_blame_output(&o.stdout))
-                            .unwrap_or_default();
-                        if let Ok(encoded) = bincode::serialize(&lines) {
-                            let _ = cache.insert(blob_oid.as_bytes(), encoded.as_slice());
-                        }
-                        lines
-                    });
-                    pb.inc(1);
-                    let mut period_hist: FxHashMap<i32, u64> = FxHashMap::default();
-                    let mut author_hist: FxHashMap<String, u64> = FxHashMap::default();
-                    for (lts, author) in lines {
-                        *period_hist.entry(ts_to_period_int(lts, yearly)).or_insert(0) += 1;
-                        *author_hist.entry(author).or_insert(0) += 1;
-                    }
-                    (blob_oid, (period_hist, author_hist))
-                })
-                .collect()
-        });
+    let (blob_hists, hits) = run_blame_phase(
+        &blame_lookup, &repo_path, args.no_cache, &cache, &blame_pool, &pb, yearly,
+    );
 
-    let hits = cache_hits.load(std::sync::atomic::Ordering::Relaxed);
     pb.finish_and_clear();
     info!(
         "Blame complete  ({hits}/{unique_count} cache hits, {:.0}%)",
@@ -273,17 +418,7 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
 
     // Fan out: for each work item, add the blob's histogram counts: O(items × periods)
     // Keying by OID (not ts) prevents same-second commits from inflating a single bucket.
-    let mut agg: FxHashMap<(_, i32), u64> = FxHashMap::default();
-    let mut author_agg: FxHashMap<(_, String), u64> = FxHashMap::default();
-    for item in &items {
-        let Some((period_hist, author_hist)) = blob_hists.get(&item.blob_oid) else { continue };
-        for (&period, &count) in period_hist {
-            *agg.entry((item.commit_oid, period)).or_insert(0) += count;
-        }
-        for (author, &count) in author_hist {
-            *author_agg.entry((item.commit_oid, author.clone())).or_insert(0) += count;
-        }
-    }
+    let (agg, author_agg) = aggregate(&items, &blob_hists);
     drop(items);
     drop(blob_hists);
 
@@ -305,37 +440,9 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
         all_periods.last().unwrap_or(&String::new())
     );
 
-    // Find the smallest set of top authors covering ≥ threshold% of lines at HEAD,
-    // then bucket the rest as "other".
-    let active_authors: Vec<String> = if let Some(&(last_oid, _)) = sampled.last() {
-        let mut head_counts: Vec<(String, u64)> = author_agg
-            .iter()
-            .filter(|((oid, _), _)| *oid == last_oid)
-            .map(|((_, author), &count)| (author.clone(), count))
-            .collect();
-        head_counts.sort_by(|a, b| b.1.cmp(&a.1));
-        let total: u64 = head_counts.iter().map(|(_, c)| c).sum();
-        let target = (total as f64 * args.author_threshold) as u64;
-        let mut cumulative = 0u64;
-        let mut active = Vec::new();
-        for (author, count) in head_counts {
-            active.push(author);
-            cumulative += count;
-            if cumulative >= target {
-                break;
-            }
-        }
-        active
-    } else {
-        Vec::new()
-    };
+    let (active_authors, has_other, commit_other) =
+        select_authors(&author_agg, &sampled, args.author_threshold);
     debug!("{} active authors (threshold {:.0}%)", active_authors.len(), args.author_threshold * 100.0);
-
-    let active_author_set: FxHashSet<String> = active_authors.iter().cloned().collect();
-
-    let has_other = sampled.last().map_or(false, |&(last_oid, _)| {
-        author_agg.keys().any(|(oid, a)| *oid == last_oid && !active_author_set.contains(a))
-    });
 
     let all_authors: Vec<String> = {
         let mut v = active_authors.clone();
@@ -343,51 +450,11 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
         v
     };
 
-    let mut commit_other: FxHashMap<_, u64> = FxHashMap::default();
-    if has_other {
-        for ((oid, author), &count) in &author_agg {
-            if !active_author_set.contains(author) {
-                *commit_other.entry(*oid).or_insert(0) += count;
-            }
-        }
-    }
-
     let repo_for_meta = Repository::open(&repo_path)?;
-    let series: Vec<SeriesPoint> = sampled
-        .iter()
-        .map(|&(oid, ts)| {
-            let (summary, author) = repo_for_meta
-                .find_commit(oid)
-                .ok()
-                .map(|c| (
-                    c.summary().unwrap_or("").to_string(),
-                    c.author().name().unwrap_or("unknown").to_string(),
-                ))
-                .unwrap_or_default();
-            let counts: Vec<(usize, u64)> = all_period_ints
-                .iter()
-                .enumerate()
-                .filter_map(|(i, &p)| {
-                    let c = agg.get(&(oid, p)).copied().unwrap_or(0);
-                    if c > 0 { Some((i, c)) } else { None }
-                })
-                .collect();
-            let total: u64 = counts.iter().map(|(_, c)| c).sum();
-            let mut author_counts: Vec<(usize, u64)> = active_authors
-                .iter()
-                .enumerate()
-                .filter_map(|(i, a)| {
-                    let c = author_agg.get(&(oid, a.clone())).copied().unwrap_or(0);
-                    if c > 0 { Some((i, c)) } else { None }
-                })
-                .collect();
-            if has_other {
-                let c = commit_other.get(&oid).copied().unwrap_or(0);
-                if c > 0 { author_counts.push((active_authors.len(), c)); }
-            }
-            SeriesPoint { ts, total, counts, author_counts, summary, author }
-        })
-        .collect();
+    let series = build_series(
+        &sampled, &agg, &author_agg, &active_authors, has_other,
+        &commit_other, &all_period_ints, &repo_for_meta,
+    );
 
     let tags = get_version_tags(&repo_path).unwrap_or_default();
 
@@ -412,21 +479,7 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
         tags,
     };
 
-    let out_path = args.output_dir.join(format!("{name}.msgpack"));
-    fs::write(&out_path, rmp_serde::to_vec_named(&output)?)?;
-    info!("Written {}", out_path.display());
-
-    let repos_path = args.output_dir.join("repos.json");
-    let mut repos: Vec<String> = if repos_path.exists() {
-        serde_json::from_str(&fs::read_to_string(&repos_path)?).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    if !repos.contains(&name) {
-        repos.push(name);
-        repos.sort();
-        fs::write(&repos_path, serde_json::to_string_pretty(&repos)?)?;
-    }
+    write_output(&output, &args.output_dir, &name)?;
 
     #[cfg(feature = "profiling")]
     if let Ok(report) = _guard.report().build() {
@@ -435,8 +488,6 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
         let file = std::fs::File::create("flamegraph.svg")?;
         report.flamegraph(file)?;
 
-        // Collapsed stacks: each line is "a;b;c <count>", readable by inferno/flamegraph tools
-        // and grep-able for specific functions.
         let mut folded = std::io::BufWriter::new(std::fs::File::create("profile.folded")?);
         let mut tally: FxHashMap<String, isize> = FxHashMap::default();
         for (frames, count) in &report.data {
