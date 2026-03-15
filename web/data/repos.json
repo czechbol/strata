@@ -3,11 +3,17 @@
   "deno",
   "fzf",
   "git",
+  "golang",
   "neovim",
   "next.js",
+  "node",
   "postgres",
+  "prometheus",
   "rails",
+  "react",
   "redis",
   "sqlite",
-  "uv"
+  "terraform",
+  "uv",
+  "vim"
 ]
