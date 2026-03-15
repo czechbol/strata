@@ -22,11 +22,11 @@ pub fn spawn_blame(
         "-C", &repo_path.to_string_lossy(),
         "blame", "--porcelain", "-w",
         &commit_oid.to_string(),
-        "--", file_path,
     ]);
     if let Some(p) = ignore_revs {
         cmd.arg(format!("--ignore-revs-file={}", p.display()));
     }
+    cmd.args(["--", file_path]);
     cmd.env("GIT_CONFIG_NOSYSTEM", "1")
        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
        .env("GIT_OPTIONAL_LOCKS", "0")

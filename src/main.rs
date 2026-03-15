@@ -384,8 +384,11 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
     let ignore_revs_file = {
         let candidate = repo_path.join(".git-blame-ignore-revs");
         if candidate.is_file() {
-            info!("using .git-blame-ignore-revs at {}", candidate.display());
-            Some(candidate)
+            // Canonicalize to absolute path: git -C <repo_path> resolves
+            // --ignore-revs-file relative to repo_path, not the original cwd.
+            let abs = candidate.canonicalize().unwrap_or(candidate);
+            info!("using .git-blame-ignore-revs at {}", abs.display());
+            Some(abs)
         } else {
             None
         }
