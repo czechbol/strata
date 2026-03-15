@@ -3,8 +3,10 @@ use git2::{Oid, Repository, Sort};
 use globset::GlobSet;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use std::env;
 use std::fs;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, trace, warn};
 
@@ -252,64 +254,94 @@ pub fn sample_commits(commits: Vec<(Oid, i64)>, n: usize) -> Vec<(Oid, i64)> {
     sampled
 }
 
-/// Parse one line of `git ls-tree -r` output into `(blob_oid, path)`.
-/// Format: `<mode> <type> <sha>\t<path>`
-fn parse_ls_tree_line(line: &[u8]) -> Option<(Oid, String)> {
-    let tab = line.iter().position(|&b| b == b'\t')?;
-    let meta = &line[..tab];
-    let path = std::str::from_utf8(&line[tab + 1..]).ok()?;
-    if path.is_empty() {
-        return None;
-    }
-    // meta = "<mode> <type> <sha>" — find the two spaces
-    let sp1 = meta.iter().position(|&b| b == b' ')?;
-    let sp2 = meta[sp1 + 1..].iter().position(|&b| b == b' ')? + sp1 + 1;
-    if &meta[sp1 + 1..sp2] != b"blob" {
-        return None;
-    }
-    let sha = std::str::from_utf8(&meta[sp2 + 1..]).ok()?;
-    let blob_oid = Oid::from_str(sha).ok()?;
-    Some((blob_oid, path.to_string()))
+/// A persistent `git cat-file --batch` subprocess used to read tree objects
+/// without per-commit spawn overhead. One instance lives per rayon thread via
+/// `thread_local!`, amortising git startup across all commits on that thread.
+struct CatFile {
+    _child: std::process::Child,
+    stdin: BufWriter<std::process::ChildStdin>,
+    stdout: BufReader<std::process::ChildStdout>,
 }
 
-/// Shell out to `git ls-tree -r` to list all blobs in a commit tree.
-/// Same approach as blame: subprocess is orders of magnitude faster than
-/// libgit2's tree walk under parallel load due to ODB lock contention.
-fn ls_tree_blobs(repo_path: &Path, commit_oid: Oid) -> Vec<(Oid, String)> {
-    let output = std::process::Command::new("git")
-        .args([
-            "-C",
-            &repo_path.to_string_lossy(),
-            "ls-tree",
-            "-r",
-            "--full-tree",
-            &commit_oid.to_string(),
-        ])
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            if cfg!(windows) { "NUL" } else { "/dev/null" },
-        )
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .map(|o| o.stdout)
-        .unwrap_or_default();
+impl CatFile {
+    fn start(repo_path: &Path) -> Option<Self> {
+        let mut child = std::process::Command::new("git")
+            .args(["-C", &repo_path.to_string_lossy(), "cat-file", "--batch"])
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let stdin = BufWriter::new(child.stdin.take()?);
+        let stdout = BufReader::new(child.stdout.take()?);
+        Some(Self { _child: child, stdin, stdout })
+    }
 
-    output
-        .split(|&b| b == b'\n')
-        .filter_map(parse_ls_tree_line)
-        .collect()
+    /// Recursively walk a tree object, appending `(blob_oid, path)` to `out`.
+    /// Binary tree format per entry: `<mode> <name>\0<20-byte-sha>`.
+    fn walk_tree(&mut self, tree_oid: Oid, prefix: &str, out: &mut Vec<(Oid, String)>) {
+        if writeln!(self.stdin, "{tree_oid}").is_err() { return; }
+        if self.stdin.flush().is_err() { return; }
+
+        // Header: "<sha> <type> <size>\n"  or  "<sha> missing\n"
+        let mut header = String::new();
+        if self.stdout.read_line(&mut header).is_err() { return; }
+        let mut parts = header.split_ascii_whitespace();
+        parts.next(); // sha
+        let obj_type = parts.next().unwrap_or("");
+        let size: usize = match parts.next().and_then(|s| s.parse().ok()) {
+            Some(n) if obj_type == "tree" => n,
+            _ => return, // missing or not a tree; stream is still clean (no data follows)
+        };
+
+        let mut data = vec![0u8; size];
+        if Read::read_exact(&mut self.stdout, &mut data).is_err() { return; }
+        let mut nl = [0u8; 1];
+        let _ = Read::read_exact(&mut self.stdout, &mut nl); // consume trailing newline
+
+        // Parse entries: "<mode> <name>\0<20-byte-sha>" ...
+        let mut i = 0;
+        while i < data.len() {
+            let Some(sp) = data[i..].iter().position(|&b| b == b' ') else { break };
+            let sp = i + sp;
+            let mode = &data[i..sp];
+
+            let Some(nul) = data[sp + 1..].iter().position(|&b| b == 0) else { break };
+            let nul = sp + 1 + nul;
+            let name = match std::str::from_utf8(&data[sp + 1..nul]) {
+                Ok(n) => n,
+                Err(_) => { i = nul + 21; continue; }
+            };
+            if nul + 21 > data.len() { break; }
+            let entry_oid = match Oid::from_bytes(&data[nul + 1..nul + 21]) {
+                Ok(id) => id,
+                Err(_) => { i = nul + 21; continue; }
+            };
+            i = nul + 21;
+
+            if mode == b"40000" || mode == b"040000" {
+                self.walk_tree(entry_oid, &format!("{prefix}{name}/"), out);
+            } else if mode != b"160000" {
+                // blob (100644 / 100755 / 120000); skip gitlinks (160000)
+                out.push((entry_oid, format!("{prefix}{name}")));
+            }
+        }
+    }
 }
 
 /// Returns all `(commit_oid, blob_oid)` work pairs **and** a deduplicated
 /// `blame_lookup` map: one `(commit_oid, file_path)` per unique blob OID,
 /// sufficient for the blame phase without duplicating paths across commits.
 ///
-/// Uses `git ls-tree` subprocesses (not libgit2) to avoid ODB lock contention
-/// under parallel load. Runs inside `pool` so `-j` applies to both this phase
-/// and the subsequent blame phase.
+/// Uses one persistent `git cat-file --batch` process per rayon thread so
+/// git startup cost is paid once per thread, not once per commit. Runs inside
+/// `pool` so `-j` controls parallelism for both this phase and blame.
 #[allow(clippy::type_complexity)]
 pub fn collect_work_items(
     repo_path: &Path,
@@ -319,38 +351,59 @@ pub fn collect_work_items(
     exclude_set: &Option<GlobSet>,
     pool: &rayon::ThreadPool,
 ) -> Result<(Vec<WorkItem>, FxHashMap<Oid, (Oid, String)>)> {
-    let per_commit: Vec<Vec<(Oid, Oid, String)>> = pool.install(|| {
+    // Single-threaded: resolve tree OID for each commit (reads only the commit
+    // object — a few hundred bytes — so this is very fast).
+    let commit_trees: Vec<(Oid, Oid)> = {
+        let repo = Repository::open(repo_path)?;
         sampled
+            .iter()
+            .filter_map(|&(oid, _)| Some((oid, repo.find_commit(oid).ok()?.tree_id())))
+            .collect()
+    };
+
+    thread_local! {
+        static CAT_FILE: RefCell<Option<CatFile>> = RefCell::new(None);
+    }
+
+    let per_commit: Vec<Vec<(Oid, Oid, String)>> = pool.install(|| {
+        commit_trees
             .par_iter()
-            .map(|&(oid, _)| {
-                let entries: Vec<(Oid, Oid, String)> = ls_tree_blobs(repo_path, oid)
-                    .into_iter()
-                    .filter(|(_, path)| {
-                        if let Some(ref exts) = extensions {
-                            let ext = Path::new(path)
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or("");
-                            if !exts.iter().any(|x| x.trim_start_matches('.') == ext) {
-                                return false;
+            .map(|&(commit_oid, tree_oid)| {
+                CAT_FILE.with(|cell| {
+                    let mut opt = cell.borrow_mut();
+                    if opt.is_none() {
+                        *opt = CatFile::start(repo_path);
+                    }
+                    let Some(cat_file) = opt.as_mut() else { return vec![] };
+
+                    let mut blobs = Vec::new();
+                    cat_file.walk_tree(tree_oid, "", &mut blobs);
+
+                    let entries = blobs
+                        .into_iter()
+                        .filter(|(_, path)| {
+                            if let Some(ref exts) = extensions {
+                                let ext = Path::new(path)
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("");
+                                if !exts.iter().any(|x| x.trim_start_matches('.') == ext) {
+                                    return false;
+                                }
                             }
-                        }
-                        if let Some(ref inc) = include_set {
-                            if !inc.is_match(path) {
-                                return false;
+                            if let Some(ref inc) = include_set {
+                                if !inc.is_match(path) { return false; }
                             }
-                        }
-                        if let Some(ref exc) = exclude_set {
-                            if exc.is_match(path) {
-                                return false;
+                            if let Some(ref exc) = exclude_set {
+                                if exc.is_match(path) { return false; }
                             }
-                        }
-                        true
-                    })
-                    .map(|(blob_oid, path)| (blob_oid, oid, path))
-                    .collect();
-                trace!("commit {} → {} files", &oid.to_string()[..8], entries.len());
-                entries
+                            true
+                        })
+                        .map(|(blob_oid, path)| (blob_oid, commit_oid, path))
+                        .collect::<Vec<_>>();
+                    trace!("commit {} → {} files", &commit_oid.to_string()[..8], entries.len());
+                    entries
+                })
             })
             .collect()
     });
@@ -361,7 +414,6 @@ pub fn collect_work_items(
     for commit_entries in per_commit {
         for (blob_oid, commit_oid, path) in commit_entries {
             items.push(WorkItem { commit_oid, blob_oid });
-            // Store one (commit_oid, path) per unique blob for the blame phase.
             blame_lookup.entry(blob_oid).or_insert_with(|| (commit_oid, path));
         }
     }
