@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use git2::{Oid, Repository, Sort, TreeWalkMode, TreeWalkResult};
 use globset::GlobSet;
+use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::env;
 use std::fs;
@@ -254,6 +255,9 @@ pub fn sample_commits(commits: Vec<(Oid, i64)>, n: usize) -> Vec<(Oid, i64)> {
 /// Returns all `(commit_oid, blob_oid)` work pairs **and** a deduplicated
 /// `blame_lookup` map: one `(commit_oid, file_path)` per unique blob OID,
 /// sufficient for the blame phase without duplicating paths across commits.
+///
+/// Tree walks are parallelised across commits. Each commit opens its own
+/// `Repository` handle because `git2::Repository` is not `Send`.
 #[allow(clippy::type_complexity)]
 pub fn collect_work_items(
     repo_path: &Path,
@@ -262,56 +266,62 @@ pub fn collect_work_items(
     include_set: &Option<GlobSet>,
     exclude_set: &Option<GlobSet>,
 ) -> Result<(Vec<WorkItem>, FxHashMap<Oid, (Oid, String)>)> {
-    let repo = Repository::open(repo_path)?;
+    // Parallel: each commit opens its own repo handle and returns its matching blobs.
+    let per_commit: Result<Vec<Vec<(Oid, Oid, String)>>> = sampled
+        .par_iter()
+        .map(|&(oid, _)| -> Result<Vec<(Oid, Oid, String)>> {
+            let repo = Repository::open(repo_path)?;
+            let mut entries: Vec<(Oid, Oid, String)> = Vec::new();
+            let commit = repo.find_commit(oid)?;
+            let tree = commit.tree()?;
+
+            tree.walk(TreeWalkMode::PreOrder, |dir, entry| {
+                if entry.kind() != Some(git2::ObjectType::Blob) {
+                    return TreeWalkResult::Ok;
+                }
+                let name = match entry.name() {
+                    Some(n) => n,
+                    None => return TreeWalkResult::Ok,
+                };
+                if let Some(ref exts) = extensions {
+                    let matched = Path::new(name)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| exts.iter().any(|x| x.trim_start_matches('.') == e))
+                        .unwrap_or(false);
+                    if !matched {
+                        return TreeWalkResult::Ok;
+                    }
+                }
+                let full_path = format!("{dir}{name}");
+                if let Some(ref inc) = include_set {
+                    if !inc.is_match(&full_path) {
+                        return TreeWalkResult::Ok;
+                    }
+                }
+                if let Some(ref exc) = exclude_set {
+                    if exc.is_match(&full_path) {
+                        return TreeWalkResult::Ok;
+                    }
+                }
+                entries.push((entry.id(), oid, full_path));
+                TreeWalkResult::Ok
+            })?;
+
+            trace!("commit {} → {} files", &oid.to_string()[..8], entries.len());
+            Ok(entries)
+        })
+        .collect();
+
+    // Merge sequentially to build items and deduplicated blame_lookup.
     let mut items = Vec::new();
     let mut blame_lookup: FxHashMap<Oid, (Oid, String)> = FxHashMap::default();
-
-    for &(oid, _) in sampled {
-        let before = items.len();
-        let commit = repo.find_commit(oid)?;
-        let tree = commit.tree()?;
-
-        tree.walk(TreeWalkMode::PreOrder, |dir, entry| {
-            if entry.kind() != Some(git2::ObjectType::Blob) {
-                return TreeWalkResult::Ok;
-            }
-            let name = match entry.name() {
-                Some(n) => n,
-                None => return TreeWalkResult::Ok,
-            };
-            if let Some(ref exts) = extensions {
-                let matched = Path::new(name)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| exts.iter().any(|x| x.trim_start_matches('.') == e))
-                    .unwrap_or(false);
-                if !matched {
-                    return TreeWalkResult::Ok;
-                }
-            }
-            let full_path = format!("{dir}{name}");
-            if let Some(ref inc) = include_set {
-                if !inc.is_match(&full_path) {
-                    return TreeWalkResult::Ok;
-                }
-            }
-            if let Some(ref exc) = exclude_set {
-                if exc.is_match(&full_path) {
-                    return TreeWalkResult::Ok;
-                }
-            }
-            let blob_oid = entry.id();
-            items.push(WorkItem { commit_oid: oid, blob_oid });
+    for commit_entries in per_commit? {
+        for (blob_oid, commit_oid, full_path) in commit_entries {
+            items.push(WorkItem { commit_oid, blob_oid });
             // Store one (commit_oid, path) per unique blob for the blame phase.
-            blame_lookup.entry(blob_oid).or_insert_with(|| (oid, full_path));
-            TreeWalkResult::Ok
-        })?;
-
-        trace!(
-            "commit {} → {} files",
-            &oid.to_string()[..8],
-            items.len() - before
-        );
+            blame_lookup.entry(blob_oid).or_insert_with(|| (commit_oid, full_path));
+        }
     }
 
     debug!("{} (commit, file) work items collected", items.len());
