@@ -200,8 +200,12 @@ fn run_blame_phase(
                         .filter(|o| o.status.success())
                         .map(|o| parse_blame_output(&o.stdout))
                         .unwrap_or_default();
-                    if let Ok(encoded) = bincode::serialize(&lines) {
-                        let _ = cache.insert(blob_oid.as_bytes(), encoded.as_slice());
+                    // Don't cache empty results — they likely indicate a blame
+                    // failure (e.g. bad path, git error) and would poison future runs.
+                    if !lines.is_empty() {
+                        if let Ok(encoded) = bincode::serialize(&lines) {
+                            let _ = cache.insert(blob_oid.as_bytes(), encoded.as_slice());
+                        }
                     }
                     lines
                 });
