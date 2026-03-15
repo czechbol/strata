@@ -177,12 +177,14 @@ fn run_blame_phase(
     yearly: bool,
     ignore_revs: Option<&Path>,
 ) -> (BlobHists, u64) {
+    type RawResult = (Oid, (FxHashMap<i32, u64>, FxHashMap<String, u64>), Option<(Vec<u8>, Vec<u8>)>);
+
     let cache_hits = std::sync::atomic::AtomicU64::new(0);
-    let blob_hists = pool.install(|| {
+    let raw: Vec<RawResult> = pool.install(|| {
         blame_lookup
             .par_iter()
             .map(|(&blob_oid, (commit_oid, file_path))| {
-                let lines = if !no_cache {
+                let cached = if !no_cache {
                     cache
                         .get(blob_oid.as_bytes())
                         .ok()
@@ -193,8 +195,11 @@ fn run_blame_phase(
                         })
                 } else {
                     None
-                }
-                .unwrap_or_else(|| {
+                };
+
+                let (lines, write_payload) = if let Some(lines) = cached {
+                    (lines, None)
+                } else {
                     let lines = spawn_blame(repo_path, *commit_oid, file_path, ignore_revs)
                         .and_then(|child| child.wait_with_output().ok())
                         .filter(|o| o.status.success())
@@ -202,13 +207,16 @@ fn run_blame_phase(
                         .unwrap_or_default();
                     // Don't cache empty results — they likely indicate a blame
                     // failure (e.g. bad path, git error) and would poison future runs.
-                    if !lines.is_empty() {
-                        if let Ok(encoded) = bincode::serialize(&lines) {
-                            let _ = cache.insert(blob_oid.as_bytes(), encoded.as_slice());
-                        }
-                    }
-                    lines
-                });
+                    let write_payload = if !lines.is_empty() {
+                        bincode::serialize(&lines)
+                            .ok()
+                            .map(|encoded| (blob_oid.as_bytes().to_vec(), encoded))
+                    } else {
+                        None
+                    };
+                    (lines, write_payload)
+                };
+
                 pb.inc(1);
                 let mut period_hist: FxHashMap<i32, u64> = FxHashMap::default();
                 let mut author_hist: FxHashMap<String, u64> = FxHashMap::default();
@@ -216,11 +224,20 @@ fn run_blame_phase(
                     *period_hist.entry(ts_to_period_int(lts, yearly)).or_insert(0) += 1;
                     *author_hist.entry(author).or_insert(0) += 1;
                 }
-                (blob_oid, (period_hist, author_hist))
+                (blob_oid, (period_hist, author_hist), write_payload)
             })
             .collect()
     });
+
     let hits = cache_hits.load(std::sync::atomic::Ordering::Relaxed);
+    // Apply cache writes sequentially after the parallel phase to eliminate contention.
+    let mut blob_hists = BlobHists::default();
+    for (oid, hists, write) in raw {
+        blob_hists.insert(oid, hists);
+        if let Some((k, v)) = write {
+            let _ = cache.insert(k, v);
+        }
+    }
     (blob_hists, hits)
 }
 
