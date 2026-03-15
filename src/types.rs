@@ -1,5 +1,5 @@
 use git2::Oid;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 pub struct OutputData {
@@ -11,6 +11,15 @@ pub struct OutputData {
     pub authors: Vec<String>,
     pub series: Vec<SeriesPoint>,
     pub tags: Vec<Tag>,
+    pub run_fingerprint: Option<String>,
+}
+
+/// Minimal deserializable view of an existing output file, for incremental-skip checks.
+/// Unknown fields are silently skipped, so old files without `run_fingerprint` still parse.
+#[derive(Deserialize)]
+pub struct OutputMeta {
+    #[serde(default)]
+    pub run_fingerprint: Option<String>,
 }
 
 #[derive(Serialize)]
