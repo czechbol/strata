@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use git2::{Oid, Repository, Sort, TreeWalkMode, TreeWalkResult};
 use globset::GlobSet;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -81,6 +81,86 @@ pub fn ensure_repo(url: &str, ssh_key: Option<PathBuf>) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Returns the root commit (0 parents) reached by following first-parent links from HEAD.
+fn find_first_parent_root(repo: &Repository) -> Result<Oid> {
+    let mut current = repo
+        .head()
+        .and_then(|r| r.peel_to_commit())
+        .map(|c| c.id())
+        .unwrap_or_else(|_| Oid::zero());
+    loop {
+        let commit = repo.find_commit(current)?;
+        if commit.parent_count() == 0 {
+            return Ok(current);
+        }
+        current = commit.parent_id(0)?;
+    }
+}
+
+/// Returns OIDs of commits whose first-parent chain does NOT lead to `main_root`.
+///
+/// These are commits from unrelated histories that were merged in via
+/// `--allow-unrelated-histories` (e.g. a module developed as a separate repo).
+/// Their trees only contain that project's files, so sampling them produces
+/// dramatic drops in the chart.
+///
+/// Uses memoised traversal: each commit's first-parent chain is walked once and
+/// the result (foreign / native) is cached for all commits in that chain.
+fn find_foreign_oids(
+    repo: &Repository,
+    commits: &[(Oid, i64)],
+    main_root: Oid,
+) -> Result<FxHashSet<Oid>> {
+    let mut memo: FxHashMap<Oid, bool> = FxHashMap::default(); // true = foreign
+    memo.insert(main_root, false);
+    let mut foreign: FxHashSet<Oid> = FxHashSet::default();
+
+    for &(oid, _) in commits {
+        if memo.contains_key(&oid) {
+            if memo[&oid] {
+                foreign.insert(oid);
+            }
+            continue;
+        }
+
+        // Walk the first-parent chain until we reach a memoised commit or a root,
+        // accumulating unresolved commits in `chain`.
+        let mut chain: Vec<Oid> = Vec::new();
+        let mut current = oid;
+
+        loop {
+            if let Some(&is_foreign) = memo.get(&current) {
+                for &c in &chain {
+                    memo.insert(c, is_foreign);
+                    if is_foreign {
+                        foreign.insert(c);
+                    }
+                }
+                break;
+            }
+
+            chain.push(current);
+
+            let commit = repo.find_commit(current)?;
+            if commit.parent_count() == 0 {
+                // Root commit — foreign if it isn't the known main root.
+                let is_foreign = current != main_root;
+                for &c in &chain {
+                    memo.insert(c, is_foreign);
+                    if is_foreign {
+                        foreign.insert(c);
+                    }
+                }
+                break;
+            }
+
+            current = commit.parent_id(0)?;
+        }
+    }
+
+    Ok(foreign)
+}
+
 pub fn get_commit_list(repo_path: &Path, first_parent: bool) -> Result<Vec<(Oid, i64)>> {
     let repo = Repository::open(repo_path)?;
     let mut walk = repo.revwalk()?;
@@ -108,15 +188,43 @@ pub fn get_commit_list(repo_path: &Path, first_parent: bool) -> Result<Vec<(Oid,
         }
     }
 
-    let mut commits = Vec::new();
+    let mut commits: Vec<(Oid, i64)> = Vec::new();
+    let mut subtree_squash: FxHashSet<Oid> = FxHashSet::default();
     for id in walk {
         let oid = id?;
-        let ts = repo.find_commit(oid)?.time().seconds();
+        let commit = repo.find_commit(oid)?;
+        let ts = commit.time().seconds();
+        // Detect git-subtree squash imports: their tree contains only the
+        // subtree's files (e.g. hiredis, jemalloc), not the full codebase.
+        if !first_parent && commit.message().unwrap_or("").starts_with("Squashed '") {
+            subtree_squash.insert(oid);
+        }
         commits.push((oid, ts));
     }
     if commits.is_empty() {
         anyhow::bail!("No commits found — is this a valid git repository?");
     }
+
+    // When doing a full DAG walk, filter out two classes of commits that produce
+    // near-zero drops because their trees are sparse relative to the mainline:
+    //   1. git-subtree squash commits (detected above by message prefix)
+    //   2. Commits from unrelated histories merged in via --allow-unrelated-histories
+    //      (detected by their first-parent chain leading to a different root)
+    if !first_parent {
+        let main_root = find_first_parent_root(&repo)?;
+        let foreign = find_foreign_oids(&repo, &commits, main_root)?;
+        let before = commits.len();
+        commits.retain(|(oid, _)| !foreign.contains(oid) && !subtree_squash.contains(oid));
+        let removed = before - commits.len();
+        if removed > 0 {
+            debug!(
+                "Filtered {removed} unrelated-history/subtree-squash commits \
+                 ({} remain)",
+                commits.len()
+            );
+        }
+    }
+
     commits.sort_by_key(|&(_, ts)| ts);
     debug!("Found {} commits in history", commits.len());
     Ok(commits)
