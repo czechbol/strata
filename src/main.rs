@@ -483,11 +483,21 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
     let sampled = sample_commits(all_commits, args.samples);
     info!("{} commits sampled", sampled.len());
 
+    let yearly = args.granularity == Granularity::Year;
+    let blame_pool = build_blame_pool(args.jobs)?;
+
     info!("Collecting work items across {} commits", sampled.len());
     // collect_work_items returns compact (commit_oid, blob_oid) pairs plus a
     // deduplicated blame_lookup: one (commit_oid, path) per unique blob.
     // Keeping file_path out of every WorkItem avoids O(commits × files) String allocations.
-    let (items, blame_lookup) = collect_work_items(&repo_path, &sampled, &extensions, &include_set, &exclude_set)?;
+    let (items, blame_lookup) = collect_work_items(
+        &repo_path,
+        &sampled,
+        &extensions,
+        &include_set,
+        &exclude_set,
+        &blame_pool,
+    )?;
     let unique_count = blame_lookup.len();
     let dedup_pct = (1.0 - unique_count as f64 / items.len().max(1) as f64) * 100.0;
     info!(
@@ -501,9 +511,6 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
             .template("  {spinner:.cyan} blaming  [{bar:40.cyan/237}] {pos}/{len}  eta {eta}")?
             .progress_chars("━━╾─"),
     );
-
-    let yearly = args.granularity == Granularity::Year;
-    let blame_pool = build_blame_pool(args.jobs)?;
 
     // Blame each unique blob and aggregate to histograms inline — raw lines are
     // dropped as each closure returns, so we never hold all blame output in memory.
