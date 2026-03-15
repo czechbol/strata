@@ -242,18 +242,36 @@ fn run_blame_phase(
 }
 
 fn aggregate(items: &[WorkItem], blob_hists: &BlobHists) -> (PeriodAgg, AuthorAgg) {
-    let mut agg: PeriodAgg = FxHashMap::default();
-    let mut author_agg: AuthorAgg = FxHashMap::default();
-    for item in items {
-        let Some((period_hist, author_hist)) = blob_hists.get(&item.blob_oid) else { continue };
-        for (&period, &count) in period_hist {
-            *agg.entry((item.commit_oid, period)).or_insert(0) += count;
-        }
-        for (author, &count) in author_hist {
-            *author_agg.entry((item.commit_oid, author.clone())).or_insert(0) += count;
-        }
-    }
-    (agg, author_agg)
+    items
+        .par_iter()
+        .filter_map(|item| {
+            let (ph, ah) = blob_hists.get(&item.blob_oid)?;
+            Some((item.commit_oid, ph, ah))
+        })
+        .fold(
+            || (PeriodAgg::default(), AuthorAgg::default()),
+            |(mut agg, mut auth), (oid, ph, ah)| {
+                for (&p, &c) in ph {
+                    *agg.entry((oid, p)).or_insert(0) += c;
+                }
+                for (a, &c) in ah {
+                    *auth.entry((oid, a.clone())).or_insert(0) += c;
+                }
+                (agg, auth)
+            },
+        )
+        .reduce(
+            || (PeriodAgg::default(), AuthorAgg::default()),
+            |(mut a1, mut h1), (a2, h2)| {
+                for (k, v) in a2 {
+                    *a1.entry(k).or_insert(0) += v;
+                }
+                for (k, v) in h2 {
+                    *h1.entry(k).or_insert(0) += v;
+                }
+                (a1, h1)
+            },
+        )
 }
 
 fn select_authors(
