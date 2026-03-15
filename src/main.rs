@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 use git2::{Oid, Repository};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -19,7 +19,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 use blame::{parse_blame_output, spawn_blame};
 use period::{get_version_tags, period_int_to_string, ts_to_period_int};
 use repo::{collect_work_items, ensure_repo, get_commit_list, repo_name, sample_commits};
-use types::{OutputData, SeriesPoint, WorkItem};
+use types::{OutputData, OutputMeta, SeriesPoint, WorkItem};
 
 type BlobHists = FxHashMap<Oid, (FxHashMap<i32, u64>, FxHashMap<String, u64>)>;
 type PeriodAgg = FxHashMap<(Oid, i32), u64>;
@@ -101,6 +101,10 @@ struct ProcessArgs {
     /// Follow only the first-parent chain (skips commits merged from branches)
     #[arg(long = "first-parent")]
     first_parent: bool,
+
+    /// Force recomputation even if output appears current
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -386,20 +390,27 @@ fn write_output(output: &OutputData, output_dir: &Path, name: &str) -> Result<()
     Ok(())
 }
 
-async fn run_process(args: ProcessArgs) -> Result<()> {
+fn compute_run_fingerprint(head_oid: &str, args: &ProcessArgs) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = FxHasher::default();
+    head_oid.hash(&mut h);
+    args.samples.hash(&mut h);
+    args.extensions.hash(&mut h);
+    args.include.hash(&mut h);
+    args.exclude.hash(&mut h);
+    args.granularity.to_string().hash(&mut h);
+    args.author_threshold.to_bits().hash(&mut h);
+    args.first_parent.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
 
+async fn run_process(args: ProcessArgs) -> Result<()> {
     #[cfg(feature = "profiling")]
     let _guard = pprof::ProfilerGuardBuilder::default()
         .frequency(1000)
         .blocklist(&["libc", "libgcc", "pthread", "vdso"])
         .build()
         .expect("failed to start profiler");
-
-    let extensions: Option<Vec<String>> = args.extensions.map(|e| {
-        e.split(',').map(|s| s.trim().to_string()).collect()
-    });
-    let include_set = build_glob_set(args.include)?;
-    let exclude_set = build_glob_set(args.exclude)?;
 
     fs::create_dir_all(&args.output_dir)?;
 
@@ -417,8 +428,42 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
         .open()
         .context("Failed to open sled blame cache")?;
 
-    let repo_path = ensure_repo(&args.repo, args.ssh_key)?;
+    // Clone ssh_key so args remains intact for fingerprint computation.
+    let repo_path = ensure_repo(&args.repo, args.ssh_key.clone())?;
     let name = repo_name(&args.repo);
+
+    // Compute HEAD OID early (cheap — no commit walk) for fingerprinting and output.
+    let head_oid = {
+        let r = git2::Repository::open(&repo_path)?;
+        r.head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| c.id().to_string())
+            .unwrap_or_default()
+    };
+
+    let fingerprint = compute_run_fingerprint(&head_oid, &args);
+
+    if !args.force {
+        let out_path = args.output_dir.join(format!("{name}.msgpack"));
+        if let Ok(bytes) = fs::read(&out_path) {
+            if let Ok(meta) = rmp_serde::from_slice::<OutputMeta>(&bytes) {
+                if meta.run_fingerprint.as_deref() == Some(&fingerprint) {
+                    info!(
+                        "Output is current ({}), skipping — use --force to recompute",
+                        name
+                    );
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    let extensions: Option<Vec<String>> = args
+        .extensions
+        .map(|e| e.split(',').map(|s| s.trim().to_string()).collect());
+    let include_set = build_glob_set(args.include)?;
+    let exclude_set = build_glob_set(args.exclude)?;
 
     let ignore_revs_file = {
         let candidate = repo_path.join(".git-blame-ignore-revs");
@@ -516,13 +561,6 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
 
     let tags = get_version_tags(&repo_path).unwrap_or_default();
 
-    let head_commit = repo_for_meta
-        .head()
-        .ok()
-        .and_then(|r| r.peel_to_commit().ok())
-        .map(|c| c.id().to_string())
-        .unwrap_or_default();
-
     let total_lines: u64 = series.last().map(|s| s.total).unwrap_or(0);
     info!("Latest snapshot: {total_lines} total lines across {} periods", all_periods.len());
 
@@ -530,11 +568,12 @@ async fn run_process(args: ProcessArgs) -> Result<()> {
         repo: name.clone(),
         granularity: args.granularity.to_string(),
         generated_at: chrono::Utc::now().to_rfc3339(),
-        head_commit,
+        head_commit: head_oid,
         periods: all_periods,
         authors: all_authors,
         series,
         tags,
+        run_fingerprint: Some(fingerprint),
     };
 
     write_output(&output, &args.output_dir, &name)?;
