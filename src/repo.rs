@@ -23,12 +23,40 @@ fn fnv1a_u32(s: &str) -> u32 {
 }
 
 pub fn repo_name(url: &str) -> String {
+    let local = Path::new(url);
+    if local.is_dir() {
+        if let Ok(canonical) = local.canonicalize() {
+            if let Some(name) = canonical.file_name().and_then(|n| n.to_str()) {
+                return name.to_string();
+            }
+        }
+    }
+
     url.trim_end_matches('/')
         .trim_end_matches(".git")
         .split('/')
         .next_back()
         .unwrap_or("repo")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_name_from_url() {
+        assert_eq!(repo_name("https://github.com/foo/bar.git"), "bar");
+        assert_eq!(repo_name("https://github.com/foo/bar/"), "bar");
+    }
+
+    #[test]
+    fn repo_name_from_current_dir() {
+        let cwd = std::env::current_dir().unwrap();
+        let expected = cwd.file_name().unwrap().to_str().unwrap().to_string();
+        assert_eq!(repo_name("."), expected);
+        assert_ne!(repo_name("."), ".");
+    }
 }
 
 fn repo_clone_path(url: &str) -> PathBuf {
